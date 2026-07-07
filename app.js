@@ -519,6 +519,7 @@ function renderTeacherDashboard(force = true) {
             <button class="btn success" data-action="next" type="button" ${questions.length ? "" : "disabled"}>다음 문제</button>
             <button class="btn ghost" data-action="finish" type="button" ${questions.length ? "" : "disabled"}>누적 랭킹 보기</button>
             <button class="btn danger" data-action="reset" type="button">게임 초기화</button>
+            <button class="btn danger" data-action="clear-room" type="button">학생/문제 목록 초기화</button>
           </div>
 
           <div class="notice info">
@@ -583,7 +584,12 @@ function renderFinalResult(viewName, showTeacherControls, force = false) {
     <section class="screen">
       <div class="status-bar">
         <span class="pill gold">최종 결과</span>
-        ${showTeacherControls ? `<button class="btn danger" data-action="reset" type="button">다시 시작 준비</button>` : ""}
+        ${showTeacherControls ? `
+          <div class="button-row">
+            <button class="btn danger" data-action="reset" type="button">다시 시작 준비</button>
+            <button class="btn danger" data-action="clear-room" type="button">학생/문제 목록 초기화</button>
+          </div>
+        ` : ""}
       </div>
 
       <div class="panel">
@@ -602,6 +608,7 @@ function renderFinalResult(viewName, showTeacherControls, force = false) {
     </section>
   `, () => {
     document.querySelector("[data-action='reset']")?.addEventListener("click", resetGame);
+    document.querySelector("[data-action='clear-room']")?.addEventListener("click", clearRoomLists);
   }, force);
 }
 
@@ -880,7 +887,8 @@ function handleTeacherAction(action) {
     reveal: () => revealAnswer(false),
     next: nextQuestion,
     finish: finishGame,
-    reset: resetGame
+    reset: resetGame,
+    "clear-room": clearRoomLists
   };
   actions[action]?.();
 }
@@ -1022,6 +1030,36 @@ async function resetGame() {
   }
 }
 
+async function clearRoomLists() {
+  const ok = window.confirm("학생 목록, 문제 목록, 답변, 점수를 모두 지울까요? 이 작업은 되돌릴 수 없습니다.");
+  if (!ok) {
+    return;
+  }
+
+  const secondOk = window.confirm("정말 전체 초기화할까요? 새 반이나 새 수업을 시작할 때만 사용하세요.");
+  if (!secondOk) {
+    return;
+  }
+
+  try {
+    await update(roomRef(state.roomCode), {
+      status: "waiting",
+      currentQuestionIndex: -1,
+      questionStartedAt: null,
+      resultOpenedAt: null,
+      finishedAt: null,
+      questionOrder: null,
+      students: null,
+      questions: null,
+      answers: null
+    });
+    showToast("학생 목록과 문제 목록을 모두 초기화했습니다.", "success");
+  } catch (error) {
+    console.error(error);
+    showToast("학생/문제 목록을 초기화하지 못했습니다.", "error");
+  }
+}
+
 async function deleteQuestion(questionId) {
   if ((state.room?.status || "waiting") !== "waiting") {
     showToast("문제 삭제는 게임 시작 전 대기 상태에서만 해 주세요.", "error");
@@ -1124,9 +1162,10 @@ function getQuestions() {
 function getStudents() {
   const raw = state.room?.students || {};
   return Object.entries(raw)
+    .filter(([, value]) => cleanText(value?.name))
     .map(([id, value]) => ({
       id,
-      name: value.name || "이름 없음",
+      name: value.name,
       score: Number(value.score || 0),
       connected: Boolean(value.connected),
       joinedAt: value.joinedAt || 0
