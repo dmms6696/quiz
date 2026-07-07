@@ -29,6 +29,7 @@ class-quiz-battle/
 ```js
 const TEACHER_PASSWORD = "1234";
 const DEFAULT_TIME_LIMIT_SECONDS = 20;
+const MAX_QUESTIONS_PER_STUDENT = 3;
 const ALLOW_SOLVE_OWN_QUESTION = true;
 const AUTO_REVEAL_WHEN_TIME_UP = true;
 ```
@@ -96,7 +97,7 @@ npx serve .
 
 1. 첫 화면에서 학생으로 입장합니다.
 2. 선생님이 알려 준 방 코드와 이름을 입력합니다.
-3. 자기 자신에 대한 가벼운 4지선다 문제를 하나 만듭니다.
+3. 자기 자신에 대한 가벼운 4지선다 문제를 최대 3개까지 만듭니다.
 4. 문제, 선택지 4개, 정답 번호를 모두 입력하고 제출합니다.
 5. 대기 화면에서 기다립니다.
 6. 퀴즈가 시작되면 선택지를 눌러 답을 제출합니다.

@@ -35,6 +35,9 @@ const TEACHER_PASSWORD = "1234";
 // 문제당 제한 시간입니다.
 const DEFAULT_TIME_LIMIT_SECONDS = 20;
 
+// 학생 한 명이 제출할 수 있는 최대 문제 수입니다.
+const MAX_QUESTIONS_PER_STUDENT = 3;
+
 // false로 바꾸면 학생 본인이 낸 문제는 자동으로 0점 처리됩니다.
 const ALLOW_SOLVE_OWN_QUESTION = true;
 
@@ -159,11 +162,11 @@ function renderStudentRoute() {
   const status = state.room.status || "waiting";
 
   if (status === "waiting") {
-    const ownQuestion = findQuestionByAuthor(state.studentName);
+    const ownQuestions = findQuestionsByAuthor(state.studentName);
     if (state.activeView === "student-question") {
       return;
     }
-    if (!ownQuestion) {
+    if (!ownQuestions.length) {
       renderStudentQuestionForm();
       return;
     }
@@ -190,9 +193,9 @@ function renderStudentRoute() {
 }
 
 function renderStudentQuestionForm(existingQuestion = null) {
-  const ownQuestion = existingQuestion || findQuestionByAuthor(state.studentName);
-  const choices = normalizeChoices(ownQuestion?.choices);
-  const correctIndex = Number.isInteger(ownQuestion?.correctIndex) ? ownQuestion.correctIndex : -1;
+  const editingQuestion = existingQuestion;
+  const choices = normalizeChoices(editingQuestion?.choices);
+  const correctIndex = Number.isInteger(editingQuestion?.correctIndex) ? editingQuestion.correctIndex : -1;
 
   setView("student-question", `
     <section class="screen">
@@ -210,10 +213,11 @@ function renderStudentQuestionForm(existingQuestion = null) {
           <div class="notice warn">
             집주소, 전화번호, 가족 사정, 외모, 몸무게, 성적, 돈, 건강, 연애, 특정 친구를 놀리는 내용은 쓰지 않습니다.
           </div>
-          <p class="muted small">같은 이름으로 다시 제출하면 기존 문제가 수정됩니다.</p>
+          <p class="muted small">한 학생은 최대 3문제까지 제출할 수 있고, 대기 화면에서 제출한 문제를 각각 수정할 수 있습니다.</p>
         </aside>
 
         <form id="questionForm" class="panel">
+          <input id="editingQuestionId" type="hidden" value="${escapeAttr(editingQuestion?.id || "")}" />
           <div class="field">
             <label for="authorName">이름</label>
             <input id="authorName" maxlength="20" value="${escapeAttr(state.studentName)}" required />
@@ -221,7 +225,7 @@ function renderStudentQuestionForm(existingQuestion = null) {
 
           <div class="field">
             <label for="questionText">문제</label>
-            <textarea id="questionText" maxlength="160" placeholder="예: 내가 가장 좋아하는 음식은 무엇일까요?" required>${escapeHtml(ownQuestion?.question || "")}</textarea>
+            <textarea id="questionText" maxlength="160" placeholder="예: 내가 가장 좋아하는 음식은 무엇일까요?" required>${escapeHtml(editingQuestion?.question || "")}</textarea>
           </div>
 
           <div class="choice-input-grid">
@@ -246,8 +250,8 @@ function renderStudentQuestionForm(existingQuestion = null) {
           </div>
 
           <div class="button-row">
-            <button class="btn primary" type="submit">${ownQuestion ? "문제 수정 제출" : "문제 제출"}</button>
-            ${ownQuestion ? `<button class="btn ghost" id="goWaitingBtn" type="button">대기 화면</button>` : ""}
+            <button class="btn primary" type="submit">${editingQuestion ? "문제 수정 제출" : "새 문제 제출"}</button>
+            ${editingQuestion ? `<button class="btn ghost" id="goWaitingBtn" type="button">대기 화면</button>` : ""}
           </div>
         </form>
       </div>
@@ -263,7 +267,8 @@ function renderStudentWaiting(force = false) {
   const questions = getQuestions();
   const students = getStudents();
   const connectedCount = students.filter((student) => student.connected).length;
-  const ownQuestion = findQuestionByAuthor(state.studentName);
+  const ownQuestions = findQuestionsByAuthor(state.studentName);
+  const canAddMoreQuestions = ownQuestions.length < MAX_QUESTIONS_PER_STUDENT;
 
   setView("student-waiting", `
     <section class="screen">
@@ -290,18 +295,41 @@ function renderStudentWaiting(force = false) {
           </div>
         </div>
         <div class="notice info">선생님이 게임을 시작하면 자동으로 이동합니다.</div>
-        ${ownQuestion ? `
-          <div class="question-card">
-            <p class="muted small">내가 제출한 문제</p>
-            <h3>${escapeHtml(ownQuestion.question)}</h3>
-            <button class="btn ghost" id="editQuestionBtn" type="button">문제 수정하기</button>
+        <section class="question-card">
+          <div class="status-bar">
+            <div>
+              <h3>내가 제출한 문제</h3>
+              <p class="muted small">${ownQuestions.length} / ${MAX_QUESTIONS_PER_STUDENT}개 제출</p>
+            </div>
+            <button class="btn primary" id="addQuestionBtn" type="button" ${canAddMoreQuestions ? "" : "disabled"}>문제 추가</button>
           </div>
-        ` : ""}
+          ${ownQuestions.length ? `
+            <ul class="list">
+              ${ownQuestions.map((question, index) => `
+                <li class="list-row split">
+                  <div>
+                    <p class="muted small">내 문제 ${index + 1}</p>
+                    <strong>${escapeHtml(question.question)}</strong>
+                  </div>
+                  <button class="btn ghost" data-edit-own-question="${escapeAttr(question.id)}" type="button">수정</button>
+                </li>
+              `).join("")}
+            </ul>
+          ` : `<div class="empty">아직 제출한 문제가 없습니다.</div>`}
+        </section>
       </div>
     </section>
   `, () => {
     document.querySelector("#backHomeBtn").addEventListener("click", renderHome);
-    document.querySelector("#editQuestionBtn")?.addEventListener("click", () => renderStudentQuestionForm(ownQuestion));
+    document.querySelector("#addQuestionBtn")?.addEventListener("click", () => renderStudentQuestionForm());
+    document.querySelectorAll("[data-edit-own-question]").forEach((button) => {
+      button.addEventListener("click", () => {
+        const question = ownQuestions.find((item) => item.id === button.dataset.editOwnQuestion);
+        if (question) {
+          renderStudentQuestionForm(question);
+        }
+      });
+    });
   }, force);
 }
 
@@ -679,6 +707,7 @@ async function submitQuestion(event) {
   const choices = [0, 1, 2, 3].map((index) => cleanText(document.querySelector(`#choice${index}`).value));
   const correctInput = document.querySelector("input[name='correctIndex']:checked");
   const correctIndex = correctInput ? Number(correctInput.value) : -1;
+  const editingQuestionId = cleanText(document.querySelector("#editingQuestionId")?.value || "");
 
   if (!name) {
     showToast("이름을 입력해 주세요.", "error");
@@ -701,14 +730,27 @@ async function submitQuestion(event) {
   }
 
   try {
-    const previousKey = nameToKey(state.studentName);
     const authorKey = nameToKey(name);
-    const questionPath = ref(db, `rooms/${state.roomCode}/questions/${authorKey}`);
-    const existing = (await get(questionPath)).val();
+    const allQuestions = getQuestions();
+    const editingQuestion = editingQuestionId
+      ? allQuestions.find((item) => item.id === editingQuestionId)
+      : null;
+    const ownQuestionsForName = findQuestionsByAuthor(name);
+    const ownQuestionsExcludingCurrent = ownQuestionsForName.filter((item) => item.id !== editingQuestionId);
 
-    if (previousKey && previousKey !== authorKey) {
-      await remove(ref(db, `rooms/${state.roomCode}/questions/${previousKey}`));
+    if (editingQuestionId && !editingQuestion) {
+      showToast("수정할 문제를 찾지 못했습니다. 대기 화면에서 다시 선택해 주세요.", "error");
+      return;
     }
+
+    if (ownQuestionsExcludingCurrent.length >= MAX_QUESTIONS_PER_STUDENT) {
+      showToast(`한 학생은 문제를 최대 ${MAX_QUESTIONS_PER_STUDENT}개까지 제출할 수 있습니다.`, "error");
+      return;
+    }
+
+    const questionId = editingQuestionId || getNextQuestionId(authorKey);
+    const questionPath = ref(db, `rooms/${state.roomCode}/questions/${questionId}`);
+    const existing = (await get(questionPath)).val();
 
     state.studentName = name;
     saveStudentSession();
@@ -1091,8 +1133,25 @@ function getMyScore() {
 }
 
 function findQuestionByAuthor(name) {
+  return findQuestionsByAuthor(name)[0] || null;
+}
+
+function findQuestionsByAuthor(name) {
   const key = nameToKey(name);
-  return getQuestions().find((question) => question.authorKey === key || question.id === key) || null;
+  return getQuestions().filter((question) => {
+    return question.authorKey === key || question.id === key || question.id.startsWith(`${key}_`);
+  });
+}
+
+function getNextQuestionId(authorKey) {
+  const existingIds = new Set(getQuestions().map((question) => question.id));
+  for (let index = 1; index <= MAX_QUESTIONS_PER_STUDENT; index += 1) {
+    const questionId = `${authorKey}_${index}`;
+    if (!existingIds.has(questionId)) {
+      return questionId;
+    }
+  }
+  return `${authorKey}_${Date.now()}`;
 }
 
 function getCumulativeRanking() {
