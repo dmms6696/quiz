@@ -26,6 +26,7 @@ class-quiz-battle/
 const TEACHER_PASSWORD = "1234";
 const DEFAULT_TIME_LIMIT_SECONDS = 20;
 const MAX_QUESTIONS_PER_STUDENT = 3;
+const MAX_COMPLIMENTS_PER_STUDENT = 3;
 const COMPLIMENT_TARGET_POINTS = [1000, 800, 600, 400, 200];
 const COMPLIMENT_AUTHOR_BONUS = 300;
 const COMPLIMENT_TARGET_BONUS = 200;
@@ -134,7 +135,7 @@ rooms
 
 1. 방 코드와 이름으로 입장합니다.
 2. 칭찬할 친구를 선택합니다. 자기 자신은 선택할 수 없습니다.
-3. 칭찬 단서를 4개 이상 입력합니다. 5번째 단서는 선택입니다.
+3. 칭찬 카드는 서로 다른 친구 기준으로 최대 3명까지 만들 수 있고, 각 카드마다 칭찬 단서를 4개 이상 입력합니다. 5번째 단서는 선택입니다.
 4. 게임이 시작되면 공개된 단서를 보고 칭찬 대상을 추리합니다.
 5. 한 단서 단계에서는 한 번만 추리할 수 있습니다.
 6. 틀렸다면 다음 단서가 공개된 뒤 다시 추리할 수 있습니다.

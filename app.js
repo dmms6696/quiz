@@ -38,6 +38,9 @@ const DEFAULT_TIME_LIMIT_SECONDS = 20;
 // 학생 한 명이 제출할 수 있는 최대 문제 수입니다.
 const MAX_QUESTIONS_PER_STUDENT = 3;
 
+// 학생 한 명이 제출할 수 있는 최대 칭찬 카드 수입니다.
+const MAX_COMPLIMENTS_PER_STUDENT = 3;
+
 // 칭찬 스무고개 점수 설정입니다. 단서가 4개인 카드는 앞 4개 점수만 사용합니다.
 const COMPLIMENT_TARGET_POINTS = [1000, 800, 600, 400, 200];
 const COMPLIMENT_AUTHOR_BONUS = 300;
@@ -366,15 +369,12 @@ function renderComplimentStudentRoute() {
   const status = state.room.status || "waiting";
 
   if (status === "waiting" || status === "collecting") {
-    const ownCompliment = findComplimentByAuthor(state.studentId);
+    const ownCompliments = findComplimentsByAuthor(state.studentId);
     if (state.activeView === "compliment-form") {
-      const hasTargetOptions = getComplimentTargetOptions(ownCompliment).length > 0;
-      const targetSelect = document.querySelector("#complimentTarget");
-      if (!targetSelect?.disabled || !hasTargetOptions) {
-        return;
-      }
+      refreshComplimentTargetSelect();
+      return;
     }
-    if (!ownCompliment) {
+    if (!ownCompliments.length) {
       renderComplimentForm();
       return;
     }
@@ -411,8 +411,9 @@ function renderComplimentStudentRoute() {
 }
 
 function renderComplimentForm(existingCompliment = null) {
-  const editingCompliment = existingCompliment || findComplimentByAuthor(state.studentId);
+  const editingCompliment = existingCompliment;
   const targetOptions = getComplimentTargetOptions(editingCompliment);
+  const selectedTargetId = editingCompliment?.targetStudentId || "";
   const clues = normalizeComplimentClues(editingCompliment?.clues);
 
   setView("compliment-form", `
@@ -435,9 +436,11 @@ function renderComplimentForm(existingCompliment = null) {
           <div class="notice info">
             친절하다, 말을 잘 들어준다, 맡은 일을 잘한다, 분위기를 밝게 만든다, 노력하는 모습이 좋다, 친구를 잘 챙긴다, 수업에 열심히 참여한다 등
           </div>
+          <p class="muted small">한 학생은 최대 3개의 칭찬 카드를 제출할 수 있고, 같은 친구를 여러 번 선택하지 않는 것을 권장합니다.</p>
         </aside>
 
         <form id="complimentForm" class="panel">
+          <input id="editingComplimentId" type="hidden" value="${escapeAttr(editingCompliment?.id || "")}" />
           <div class="field">
             <label for="complimentAuthorName">내 이름</label>
             <input id="complimentAuthorName" maxlength="20" value="${escapeAttr(state.studentName)}" required />
@@ -446,12 +449,9 @@ function renderComplimentForm(existingCompliment = null) {
           <div class="field">
             <label for="complimentTarget">칭찬할 친구 선택</label>
             <select id="complimentTarget" required ${targetOptions.length ? "" : "disabled"}>
-              <option value="">친구를 선택하세요</option>
-              ${targetOptions.map((student) => `
-                <option value="${escapeAttr(student.id)}" ${editingCompliment?.targetStudentId === student.id ? "selected" : ""}>${escapeHtml(student.name)}</option>
-              `).join("")}
+              ${renderComplimentTargetOptionHtml(targetOptions, selectedTargetId)}
             </select>
-            ${targetOptions.length ? "" : `<p class="muted small">다른 친구가 방에 입장하면 칭찬 대상을 선택할 수 있습니다.</p>`}
+            <p id="complimentTargetHelp" class="muted small" ${targetOptions.length ? "hidden" : ""}>다른 친구가 방에 입장하면 칭찬 대상을 선택할 수 있습니다.</p>
           </div>
 
           <div class="form-grid">
@@ -464,7 +464,7 @@ function renderComplimentForm(existingCompliment = null) {
           </div>
 
           <div class="button-row">
-            <button class="btn primary" type="submit" ${targetOptions.length ? "" : "disabled"}>${editingCompliment ? "칭찬 카드 수정" : "칭찬 카드 제출"}</button>
+            <button class="btn primary" id="complimentSubmitBtn" type="submit" ${targetOptions.length ? "" : "disabled"}>${editingCompliment ? "칭찬 카드 수정" : "칭찬 카드 제출"}</button>
             ${editingCompliment ? `<button class="btn ghost" id="goComplimentWaitingBtn" type="button">대기 화면</button>` : ""}
           </div>
         </form>
@@ -481,7 +481,8 @@ function renderComplimentWaiting(force = false) {
   const compliments = getCompliments();
   const students = getStudents();
   const connectedCount = students.filter((student) => student.connected).length;
-  const ownCompliment = findComplimentByAuthor(state.studentId);
+  const ownCompliments = findComplimentsByAuthor(state.studentId);
+  const canAddMoreCompliments = ownCompliments.length < MAX_COMPLIMENTS_PER_STUDENT && getComplimentTargetOptions().length > 0;
 
   setView("compliment-waiting", `
     <section class="screen compliment-mode">
@@ -509,21 +510,41 @@ function renderComplimentWaiting(force = false) {
           </div>
         </div>
         <div class="notice info">선생님이 게임을 시작하면 자동으로 이동합니다.</div>
-        ${ownCompliment ? `
-          <div class="question-card">
-            <p class="muted small">내가 작성한 칭찬 카드</p>
-            <h3>${escapeHtml(ownCompliment.targetName)}에게 보내는 칭찬</h3>
-            <ol class="list">
-              ${normalizeComplimentClues(ownCompliment.clues).map((clue) => `<li class="list-row">${escapeHtml(clue)}</li>`).join("")}
-            </ol>
-            <button class="btn ghost" id="editComplimentBtn" type="button">칭찬 카드 수정하기</button>
+        <section class="question-card">
+          <div class="status-bar">
+            <div>
+              <h3>내가 작성한 칭찬 카드</h3>
+              <p class="muted small">${ownCompliments.length} / ${MAX_COMPLIMENTS_PER_STUDENT}개 제출</p>
+            </div>
+            <button class="btn primary" id="addComplimentBtn" type="button" ${canAddMoreCompliments ? "" : "disabled"}>칭찬 카드 추가</button>
           </div>
-        ` : ""}
+          ${ownCompliments.length ? `
+            <ul class="list">
+              ${ownCompliments.map((compliment, index) => `
+                <li class="list-row split">
+                  <div>
+                    <p class="muted small">내 칭찬 ${index + 1} · 대상 ${escapeHtml(compliment.targetName)}</p>
+                    <strong>${escapeHtml(normalizeComplimentClues(compliment.clues)[0] || "칭찬 단서")}</strong>
+                  </div>
+                  <button class="btn ghost" data-edit-own-compliment="${escapeAttr(compliment.id)}" type="button">수정</button>
+                </li>
+              `).join("")}
+            </ul>
+          ` : `<div class="empty">아직 제출한 칭찬 카드가 없습니다.</div>`}
+        </section>
       </div>
     </section>
   `, () => {
     document.querySelector("#backHomeBtn").addEventListener("click", renderHome);
-    document.querySelector("#editComplimentBtn")?.addEventListener("click", () => renderComplimentForm(ownCompliment));
+    document.querySelector("#addComplimentBtn")?.addEventListener("click", () => renderComplimentForm());
+    document.querySelectorAll("[data-edit-own-compliment]").forEach((button) => {
+      button.addEventListener("click", () => {
+        const compliment = ownCompliments.find((item) => item.id === button.dataset.editOwnCompliment);
+        if (compliment) {
+          renderComplimentForm(compliment);
+        }
+      });
+    });
   }, force);
 }
 
@@ -1281,7 +1302,12 @@ async function submitCompliment(event) {
 
   const name = cleanText(document.querySelector("#complimentAuthorName").value);
   const targetStudentId = cleanText(document.querySelector("#complimentTarget").value);
-  const targetStudent = getStudents().find((student) => student.id === targetStudentId);
+  const editingComplimentId = cleanText(document.querySelector("#editingComplimentId")?.value || "");
+  const allCompliments = getCompliments();
+  const editingCompliment = editingComplimentId
+    ? allCompliments.find((item) => item.id === editingComplimentId)
+    : null;
+  const targetStudent = getComplimentTargetOptions(editingCompliment).find((student) => student.id === targetStudentId);
   const clues = [0, 1, 2, 3, 4]
     .map((index) => cleanText(document.querySelector(`#complimentClue${index}`).value))
     .filter(Boolean);
@@ -1291,7 +1317,12 @@ async function submitCompliment(event) {
     return;
   }
 
-  if (!targetStudentId || !targetStudent) {
+  if (editingComplimentId && (!editingCompliment || editingCompliment.authorStudentId !== state.studentId)) {
+    showToast("수정할 칭찬 카드를 찾지 못했습니다. 대기 화면에서 다시 선택해 주세요.", "error");
+    return;
+  }
+
+  if (!targetStudentId) {
     showToast("칭찬할 친구를 선택해 주세요.", "error");
     return;
   }
@@ -1301,13 +1332,35 @@ async function submitCompliment(event) {
     return;
   }
 
+  const alreadyComplimentedTarget = findComplimentsByAuthor(state.studentId).some((compliment) => {
+    return compliment.id !== editingComplimentId && compliment.targetStudentId === targetStudentId;
+  });
+  if (alreadyComplimentedTarget) {
+    showToast("이미 다른 칭찬 카드에서 선택한 친구입니다. 다른 친구를 선택해 주세요.", "error");
+    return;
+  }
+
+  if (!targetStudent) {
+    showToast("칭찬할 친구를 선택해 주세요.", "error");
+    return;
+  }
+
   if (clues.length < 4) {
     showToast("칭찬 단서는 최소 4개 이상 입력해 주세요.", "error");
     return;
   }
 
   try {
-    const complimentPath = ref(db, `rooms/${state.roomCode}/compliments/${state.studentId}`);
+    const ownCompliments = findComplimentsByAuthor(state.studentId);
+    const ownComplimentsExcludingCurrent = ownCompliments.filter((item) => item.id !== editingComplimentId);
+
+    if (ownComplimentsExcludingCurrent.length >= MAX_COMPLIMENTS_PER_STUDENT) {
+      showToast(`한 학생은 칭찬 카드를 최대 ${MAX_COMPLIMENTS_PER_STUDENT}개까지 제출할 수 있습니다.`, "error");
+      return;
+    }
+
+    const complimentId = editingComplimentId || getNextComplimentId(state.studentId);
+    const complimentPath = ref(db, `rooms/${state.roomCode}/compliments/${complimentId}`);
     const existing = (await get(complimentPath)).val();
 
     state.studentName = name;
@@ -2090,7 +2143,13 @@ function getCurrentCompliment() {
 }
 
 function findComplimentByAuthor(studentId) {
-  return getCompliments().find((compliment) => compliment.authorStudentId === studentId || compliment.id === studentId) || null;
+  return findComplimentsByAuthor(studentId)[0] || null;
+}
+
+function findComplimentsByAuthor(studentId) {
+  return getCompliments().filter((compliment) => {
+    return compliment.authorStudentId === studentId || compliment.id === studentId || compliment.id.startsWith(`${studentId}_`);
+  });
 }
 
 function getMyComplimentTargetAnswer(complimentId) {
@@ -2121,7 +2180,15 @@ function canShowNextComplimentClue(compliment) {
 }
 
 function getComplimentTargetOptions(editingCompliment = null) {
-  const options = getStudents().filter((student) => student.id !== state.studentId);
+  const usedTargetIds = new Set(
+    findComplimentsByAuthor(state.studentId)
+      .filter((compliment) => compliment.id !== editingCompliment?.id)
+      .map((compliment) => compliment.targetStudentId)
+      .filter(Boolean)
+  );
+  const options = getStudents().filter((student) => {
+    return student.id !== state.studentId && !usedTargetIds.has(student.id);
+  });
   if (editingCompliment?.targetStudentId && !options.some((student) => student.id === editingCompliment.targetStudentId)) {
     options.push({
       id: editingCompliment.targetStudentId,
@@ -2131,6 +2198,44 @@ function getComplimentTargetOptions(editingCompliment = null) {
     });
   }
   return options;
+}
+
+function renderComplimentTargetOptionHtml(options, selectedId = "") {
+  return [
+    `<option value="">친구를 선택하세요</option>`,
+    ...options.map((student) => `
+      <option value="${escapeAttr(student.id)}" ${selectedId === student.id ? "selected" : ""}>${escapeHtml(student.name)}</option>
+    `)
+  ].join("");
+}
+
+function refreshComplimentTargetSelect() {
+  const targetSelect = document.querySelector("#complimentTarget");
+  if (!targetSelect) {
+    return;
+  }
+
+  const editingComplimentId = cleanText(document.querySelector("#editingComplimentId")?.value || "");
+  const editingCompliment = editingComplimentId
+    ? getCompliments().find((compliment) => compliment.id === editingComplimentId)
+    : null;
+  const currentValue = targetSelect.value || editingCompliment?.targetStudentId || "";
+  const options = getComplimentTargetOptions(editingCompliment);
+  const selectedId = options.some((student) => student.id === currentValue) ? currentValue : "";
+
+  targetSelect.innerHTML = renderComplimentTargetOptionHtml(options, selectedId);
+  targetSelect.value = selectedId;
+  targetSelect.disabled = !options.length;
+
+  const submitButton = document.querySelector("#complimentSubmitBtn");
+  if (submitButton) {
+    submitButton.disabled = !options.length;
+  }
+
+  const helpText = document.querySelector("#complimentTargetHelp");
+  if (helpText) {
+    helpText.hidden = options.length > 0;
+  }
 }
 
 function getComplimentGuessOptions(compliment) {
@@ -2205,6 +2310,17 @@ function getNextQuestionId(authorKey) {
     }
   }
   return `${authorKey}_${Date.now()}`;
+}
+
+function getNextComplimentId(studentId) {
+  const existingIds = new Set(getCompliments().map((compliment) => compliment.id));
+  for (let index = 1; index <= MAX_COMPLIMENTS_PER_STUDENT; index += 1) {
+    const complimentId = `${studentId}_${index}`;
+    if (!existingIds.has(complimentId)) {
+      return complimentId;
+    }
+  }
+  return `${studentId}_${Date.now()}`;
 }
 
 function getCumulativeRanking() {
