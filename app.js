@@ -30,7 +30,7 @@ const firebaseConfig = {
 };
 
 // 교사 화면 입장 비밀번호입니다. 정적 웹앱에서는 완전한 보안 장치가 아니라 수업용 잠금에 가깝습니다.
-const TEACHER_PASSWORD = "1234";
+const TEACHER_PASSWORD = "0221";
 
 // 문제당 제한 시간입니다.
 const DEFAULT_TIME_LIMIT_SECONDS = 20;
@@ -369,7 +369,9 @@ function renderStudentQuiz(force = false) {
       </div>
 
       <div class="quiz-question">
-        <p class="muted small">출제자: ${escapeHtml(question.authorName || "익명")}</p>
+        <div class="question-meta">
+          <span class="author-badge">출제자 ${escapeHtml(question.authorName || "익명")}</span>
+        </div>
         <h2>${escapeHtml(question.question)}</h2>
       </div>
 
@@ -890,9 +892,11 @@ async function startGame() {
     return;
   }
 
+  const questionOrder = shuffleArray(questions.map((question) => question.id));
   const updates = {
     status: "playing",
     currentQuestionIndex: 0,
+    questionOrder,
     timeLimit: DEFAULT_TIME_LIMIT_SECONDS,
     questionStartedAt: serverTimestamp(),
     resultOpenedAt: null,
@@ -1001,6 +1005,7 @@ async function resetGame() {
     questionStartedAt: null,
     resultOpenedAt: null,
     finishedAt: null,
+    questionOrder: null,
     answers: null
   };
 
@@ -1085,7 +1090,7 @@ function roomRef(code) {
 
 function getQuestions() {
   const raw = state.room?.questions || {};
-  return Object.entries(raw)
+  const questions = Object.entries(raw)
     .map(([id, value]) => ({
       id,
       ...value,
@@ -1100,6 +1105,20 @@ function getQuestions() {
       }
       return String(a.authorName || "").localeCompare(String(b.authorName || ""), "ko");
     });
+
+  const questionOrder = normalizeQuestionOrder(state.room?.questionOrder);
+  if (!questionOrder.length) {
+    return questions;
+  }
+
+  const questionMap = new Map(questions.map((question) => [question.id, question]));
+  const orderedQuestions = questionOrder
+    .map((questionId) => questionMap.get(questionId))
+    .filter(Boolean);
+  const orderedIds = new Set(orderedQuestions.map((question) => question.id));
+  const remainingQuestions = questions.filter((question) => !orderedIds.has(question.id));
+
+  return [...orderedQuestions, ...remainingQuestions];
 }
 
 function getStudents() {
@@ -1428,6 +1447,31 @@ function cleanText(value) {
 
 function normalizeChoices(choices = []) {
   return [0, 1, 2, 3].map((index) => String(choices?.[index] || ""));
+}
+
+function normalizeQuestionOrder(order) {
+  if (Array.isArray(order)) {
+    return order.filter(Boolean).map(String);
+  }
+
+  if (order && typeof order === "object") {
+    return Object.keys(order)
+      .sort((a, b) => Number(a) - Number(b))
+      .map((key) => order[key])
+      .filter(Boolean)
+      .map(String);
+  }
+
+  return [];
+}
+
+function shuffleArray(items) {
+  const shuffled = items.slice();
+  for (let index = shuffled.length - 1; index > 0; index -= 1) {
+    const randomIndex = Math.floor(Math.random() * (index + 1));
+    [shuffled[index], shuffled[randomIndex]] = [shuffled[randomIndex], shuffled[index]];
+  }
+  return shuffled;
 }
 
 function nameToKey(name) {
