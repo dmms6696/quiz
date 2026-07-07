@@ -6,11 +6,20 @@
       "$roomCode": {
         ".read": true,
         ".write": true,
+        "mode": {
+          ".validate": "newData.val() === 'quiz' || newData.val() === 'compliment'"
+        },
         "status": {
-          ".validate": "newData.val() === 'waiting' || newData.val() === 'playing' || newData.val() === 'result' || newData.val() === 'finished'"
+          ".validate": "newData.val() === 'waiting' || newData.val() === 'collecting' || newData.val() === 'playing' || newData.val() === 'result' || newData.val() === 'targetReveal' || newData.val() === 'authorGuess' || newData.val() === 'authorReveal' || newData.val() === 'finished'"
         },
         "currentQuestionIndex": {
           ".validate": "newData.isNumber() && newData.val() >= -1"
+        },
+        "currentComplimentIndex": {
+          ".validate": "newData.isNumber() && newData.val() >= -1"
+        },
+        "currentClueIndex": {
+          ".validate": "newData.isNumber() && newData.val() >= 0 && newData.val() <= 4"
         },
         "timeLimit": {
           ".validate": "newData.isNumber() && newData.val() >= 5 && newData.val() <= 120"
@@ -47,6 +56,28 @@
             },
             "correctIndex": {
               ".validate": "newData.isNumber() && newData.val() >= 0 && newData.val() <= 3"
+            }
+          }
+        },
+        "compliments": {
+          "$complimentId": {
+            "authorStudentId": {
+              ".validate": "newData.isString() && newData.val().length > 0 && newData.val().length <= 80"
+            },
+            "authorName": {
+              ".validate": "newData.isString() && newData.val().length > 0 && newData.val().length <= 20"
+            },
+            "targetStudentId": {
+              ".validate": "newData.isString() && newData.val().length > 0 && newData.val().length <= 80"
+            },
+            "targetName": {
+              ".validate": "newData.isString() && newData.val().length > 0 && newData.val().length <= 20"
+            },
+            "clues": {
+              ".validate": "newData.hasChildren(['0', '1', '2', '3'])",
+              "$index": {
+                ".validate": "$index.matches(/^[0-4]$/) && newData.isString() && newData.val().length > 0 && newData.val().length <= 120"
+              }
             }
           }
         },

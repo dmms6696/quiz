@@ -38,6 +38,11 @@ const DEFAULT_TIME_LIMIT_SECONDS = 20;
 // 학생 한 명이 제출할 수 있는 최대 문제 수입니다.
 const MAX_QUESTIONS_PER_STUDENT = 3;
 
+// 칭찬 스무고개 점수 설정입니다. 단서가 4개인 카드는 앞 4개 점수만 사용합니다.
+const COMPLIMENT_TARGET_POINTS = [1000, 800, 600, 400, 200];
+const COMPLIMENT_AUTHOR_BONUS = 300;
+const COMPLIMENT_TARGET_BONUS = 200;
+
 // false로 바꾸면 학생 본인이 낸 문제는 자동으로 0점 처리됩니다.
 const ALLOW_SOLVE_OWN_QUESTION = true;
 
@@ -136,6 +141,25 @@ function renderHome() {
               <label for="teacherRoomCode">방 코드</label>
               <input id="teacherRoomCode" autocomplete="off" inputmode="latin" maxlength="8" placeholder="비워 두면 자동 생성" value="${escapeAttr(savedRoom)}" />
             </div>
+            <div class="field">
+              <span class="label">게임 모드</span>
+              <div class="mode-options">
+                <label class="mode-tile">
+                  <input type="radio" name="teacherMode" value="quiz" checked />
+                  <span>
+                    <strong>자기소개 퀴즈 배틀</strong>
+                    <small>학생들이 낸 4지선다 문제를 풉니다.</small>
+                  </span>
+                </label>
+                <label class="mode-tile">
+                  <input type="radio" name="teacherMode" value="compliment" />
+                  <span>
+                    <strong>칭찬 스무고개</strong>
+                    <small>익명 칭찬 단서로 친구를 추리합니다.</small>
+                  </span>
+                </label>
+              </div>
+            </div>
             <div class="button-row">
               <button id="teacherEnterBtn" class="btn dark">교사 입장</button>
               <button id="newRoomCodeBtn" class="btn ghost" type="button">새 코드 넣기</button>
@@ -156,6 +180,11 @@ function renderHome() {
 function renderStudentRoute() {
   if (!state.room) {
     setView("student-loading", `<section class="screen"><div class="panel"><h2>방 정보를 불러오는 중입니다.</h2></div></section>`);
+    return;
+  }
+
+  if (getRoomMode() === "compliment") {
+    renderComplimentStudentRoute();
     return;
   }
 
@@ -333,6 +362,320 @@ function renderStudentWaiting(force = false) {
   }, force);
 }
 
+function renderComplimentStudentRoute() {
+  const status = state.room.status || "waiting";
+
+  if (status === "waiting" || status === "collecting") {
+    const ownCompliment = findComplimentByAuthor(state.studentId);
+    if (state.activeView === "compliment-form") {
+      const hasTargetOptions = getComplimentTargetOptions(ownCompliment).length > 0;
+      const targetSelect = document.querySelector("#complimentTarget");
+      if (!targetSelect?.disabled || !hasTargetOptions) {
+        return;
+      }
+    }
+    if (!ownCompliment) {
+      renderComplimentForm();
+      return;
+    }
+    renderComplimentWaiting(true);
+    return;
+  }
+
+  if (status === "playing") {
+    renderComplimentTargetGuess(true);
+    return;
+  }
+
+  if (status === "targetReveal") {
+    renderComplimentTargetReveal(true);
+    return;
+  }
+
+  if (status === "authorGuess") {
+    renderComplimentAuthorGuess(true);
+    return;
+  }
+
+  if (status === "authorReveal") {
+    renderComplimentCardResult("student-compliment-result", false, true);
+    return;
+  }
+
+  if (status === "finished") {
+    renderFinalResult("student-final", false, true);
+    return;
+  }
+
+  renderComplimentWaiting(true);
+}
+
+function renderComplimentForm(existingCompliment = null) {
+  const editingCompliment = existingCompliment || findComplimentByAuthor(state.studentId);
+  const targetOptions = getComplimentTargetOptions(editingCompliment);
+  const clues = normalizeComplimentClues(editingCompliment?.clues);
+
+  setView("compliment-form", `
+    <section class="screen compliment-mode">
+      <div class="status-bar">
+        <button class="btn ghost" id="backHomeBtn" type="button">처음으로</button>
+        <span class="pill gold">칭찬 스무고개</span>
+        <span class="pill blue">방 코드 ${escapeHtml(state.roomCode)}</span>
+      </div>
+
+      <div class="question-form-layout">
+        <aside class="panel tight warm-panel">
+          <h2>칭찬 카드 만들기</h2>
+          <div class="notice info">
+            친구를 놀리거나 평가하는 것이 아니라, 친구의 좋은 점을 찾아 칭찬하는 활동입니다. 칭찬을 듣는 친구가 기분 좋아질 수 있는 내용으로 적어 주세요.
+          </div>
+          <div class="notice warn">
+            외모, 몸무게, 성적, 돈, 집안 사정, 건강, 연애, 비밀, 특정 친구를 놀리는 내용은 쓰지 않습니다.
+          </div>
+          <div class="notice info">
+            친절하다, 말을 잘 들어준다, 맡은 일을 잘한다, 분위기를 밝게 만든다, 노력하는 모습이 좋다, 친구를 잘 챙긴다, 수업에 열심히 참여한다 등
+          </div>
+        </aside>
+
+        <form id="complimentForm" class="panel">
+          <div class="field">
+            <label for="complimentAuthorName">내 이름</label>
+            <input id="complimentAuthorName" maxlength="20" value="${escapeAttr(state.studentName)}" required />
+          </div>
+
+          <div class="field">
+            <label for="complimentTarget">칭찬할 친구 선택</label>
+            <select id="complimentTarget" required ${targetOptions.length ? "" : "disabled"}>
+              <option value="">친구를 선택하세요</option>
+              ${targetOptions.map((student) => `
+                <option value="${escapeAttr(student.id)}" ${editingCompliment?.targetStudentId === student.id ? "selected" : ""}>${escapeHtml(student.name)}</option>
+              `).join("")}
+            </select>
+            ${targetOptions.length ? "" : `<p class="muted small">다른 친구가 방에 입장하면 칭찬 대상을 선택할 수 있습니다.</p>`}
+          </div>
+
+          <div class="form-grid">
+            ${[0, 1, 2, 3, 4].map((index) => `
+              <div class="field">
+                <label for="complimentClue${index}">칭찬 단서 ${index + 1}${index === 4 ? " 선택" : ""}</label>
+                <textarea id="complimentClue${index}" maxlength="120" placeholder="${index === 0 ? "예: 이 친구는 친구 말을 잘 들어준다." : ""}" ${index < 4 ? "required" : ""}>${escapeHtml(clues[index] || "")}</textarea>
+              </div>
+            `).join("")}
+          </div>
+
+          <div class="button-row">
+            <button class="btn primary" type="submit" ${targetOptions.length ? "" : "disabled"}>${editingCompliment ? "칭찬 카드 수정" : "칭찬 카드 제출"}</button>
+            ${editingCompliment ? `<button class="btn ghost" id="goComplimentWaitingBtn" type="button">대기 화면</button>` : ""}
+          </div>
+        </form>
+      </div>
+    </section>
+  `, () => {
+    document.querySelector("#backHomeBtn").addEventListener("click", renderHome);
+    document.querySelector("#complimentForm").addEventListener("submit", submitCompliment);
+    document.querySelector("#goComplimentWaitingBtn")?.addEventListener("click", () => renderComplimentWaiting(true));
+  });
+}
+
+function renderComplimentWaiting(force = false) {
+  const compliments = getCompliments();
+  const students = getStudents();
+  const connectedCount = students.filter((student) => student.connected).length;
+  const ownCompliment = findComplimentByAuthor(state.studentId);
+
+  setView("compliment-waiting", `
+    <section class="screen compliment-mode">
+      <div class="status-bar">
+        <button class="btn ghost" id="backHomeBtn" type="button">처음으로</button>
+        <span class="pill gold">칭찬 스무고개</span>
+        <span class="pill blue">방 코드 ${escapeHtml(state.roomCode)}</span>
+      </div>
+
+      <div class="panel warm-panel">
+        <h2>칭찬 카드가 제출되었습니다.</h2>
+        <p class="lead">선생님이 게임을 시작하면 칭찬 스무고개가 시작됩니다.</p>
+        <div class="stats">
+          <div class="stat">
+            <span class="muted">제출된 칭찬 카드</span>
+            <span class="num">${compliments.length}</span>
+          </div>
+          <div class="stat">
+            <span class="muted">현재 접속 학생</span>
+            <span class="num">${connectedCount}</span>
+          </div>
+          <div class="stat">
+            <span class="muted">내 누적 점수</span>
+            <span class="num">${getMyScore()}</span>
+          </div>
+        </div>
+        <div class="notice info">선생님이 게임을 시작하면 자동으로 이동합니다.</div>
+        ${ownCompliment ? `
+          <div class="question-card">
+            <p class="muted small">내가 작성한 칭찬 카드</p>
+            <h3>${escapeHtml(ownCompliment.targetName)}에게 보내는 칭찬</h3>
+            <ol class="list">
+              ${normalizeComplimentClues(ownCompliment.clues).map((clue) => `<li class="list-row">${escapeHtml(clue)}</li>`).join("")}
+            </ol>
+            <button class="btn ghost" id="editComplimentBtn" type="button">칭찬 카드 수정하기</button>
+          </div>
+        ` : ""}
+      </div>
+    </section>
+  `, () => {
+    document.querySelector("#backHomeBtn").addEventListener("click", renderHome);
+    document.querySelector("#editComplimentBtn")?.addEventListener("click", () => renderComplimentForm(ownCompliment));
+  }, force);
+}
+
+function renderComplimentTargetGuess(force = false) {
+  const compliment = getCurrentCompliment();
+  if (!compliment) {
+    renderComplimentWaiting(true);
+    return;
+  }
+
+  const clueIndex = Number(state.room.currentClueIndex || 0);
+  const clues = normalizeComplimentClues(compliment.clues);
+  const visibleClues = clues.slice(0, clueIndex + 1);
+  const answer = getMyComplimentTargetAnswer(compliment.id);
+  const guessedThisClue = answer?.guesses?.[clueIndex];
+  const alreadyCorrect = Number.isInteger(answer?.firstCorrectClueIndex);
+  const authorBlocked = compliment.authorStudentId === state.studentId;
+  const options = getComplimentGuessOptions(compliment);
+  const disabled = authorBlocked || alreadyCorrect || Boolean(guessedThisClue);
+
+  setView(`compliment-target-${compliment.id}-${clueIndex}`, `
+    <section class="screen compliment-mode">
+      <div class="status-bar">
+        <span class="pill gold">칭찬 ${Number(state.room.currentComplimentIndex || 0) + 1} / ${getCompliments().length}</span>
+        <span class="pill blue">단서 ${clueIndex + 1} / ${clues.length}</span>
+        <span class="pill green">내 점수 ${getMyScore()}점</span>
+      </div>
+
+      <section class="panel warm-panel">
+        <p class="eyebrow">칭찬 대상은 누구일까요?</p>
+        <h2>공개된 칭찬 단서</h2>
+        ${renderComplimentClueCards(visibleClues)}
+      </section>
+
+      ${authorBlocked ? `<div class="notice warn">내가 작성한 칭찬입니다. 이 문제는 맞힐 수 없습니다.</div>` : ""}
+      ${alreadyCorrect ? `<div class="notice info">이미 이 칭찬의 대상을 맞혔습니다. 다음 단계까지 기다려 주세요.</div>` : ""}
+      ${guessedThisClue && !alreadyCorrect ? `<div class="notice info">이번 단서에서는 이미 추리했습니다. 다음 단서가 공개되면 다시 도전할 수 있습니다.</div>` : ""}
+
+      <section class="panel">
+        <h3>칭찬 대상 선택</h3>
+        ${renderStudentChoiceButtons(options, "target-student", disabled)}
+      </section>
+    </section>
+  `, () => {
+    document.querySelectorAll("[data-target-student]").forEach((button) => {
+      button.addEventListener("click", () => submitComplimentTargetGuess(button.dataset.targetStudent));
+    });
+  }, force);
+}
+
+function renderComplimentTargetReveal(force = false) {
+  const compliment = getCurrentCompliment();
+  if (!compliment) {
+    renderComplimentWaiting(true);
+    return;
+  }
+
+  setView(`compliment-target-reveal-${compliment.id}`, `
+    <section class="screen compliment-mode">
+      <div class="panel warm-panel">
+        <p class="eyebrow">칭찬 대상 공개</p>
+        <h1>${escapeHtml(compliment.targetName)}</h1>
+        <p class="lead">이 칭찬의 주인공입니다. 칭찬 대상 보너스 ${COMPLIMENT_TARGET_BONUS}점이 반영됩니다.</p>
+        ${renderComplimentClueCards(normalizeComplimentClues(compliment.clues))}
+      </div>
+      <div class="notice info">선생님이 작성자 추리 라운드를 시작하면 자동으로 이동합니다.</div>
+    </section>
+  `, null, force);
+}
+
+function renderComplimentAuthorGuess(force = false) {
+  const compliment = getCurrentCompliment();
+  if (!compliment) {
+    renderComplimentWaiting(true);
+    return;
+  }
+
+  const authorBlocked = compliment.authorStudentId === state.studentId;
+  const answer = getMyComplimentAuthorAnswer(compliment.id);
+  const options = getComplimentGuessOptions(compliment);
+
+  setView(`compliment-author-${compliment.id}`, `
+    <section class="screen compliment-mode">
+      <div class="status-bar">
+        <span class="pill gold">작성자 추리</span>
+        <span class="pill green">내 점수 ${getMyScore()}점</span>
+      </div>
+
+      <section class="panel warm-panel">
+        <p class="eyebrow">이 칭찬을 쓴 사람은 누구일까요?</p>
+        <h2>칭찬 대상: ${escapeHtml(compliment.targetName)}</h2>
+        ${renderComplimentClueCards(normalizeComplimentClues(compliment.clues))}
+      </section>
+
+      ${authorBlocked ? `<div class="notice warn">내가 작성한 칭찬입니다. 작성자 추리에 참여할 수 없습니다.</div>` : ""}
+      ${answer ? `<div class="notice info">작성자 추리를 제출했습니다. 선생님이 정답을 공개할 때까지 기다려 주세요.</div>` : ""}
+
+      <section class="panel">
+        <h3>작성자 선택</h3>
+        ${renderStudentChoiceButtons(options, "author-student", authorBlocked || Boolean(answer))}
+      </section>
+    </section>
+  `, () => {
+    document.querySelectorAll("[data-author-student]").forEach((button) => {
+      button.addEventListener("click", () => submitComplimentAuthorGuess(button.dataset.authorStudent));
+    });
+  }, force);
+}
+
+function renderComplimentCardResult(viewName, showTeacherControls, force = false) {
+  const compliment = getCurrentCompliment();
+  if (!compliment) {
+    renderFinalResult(viewName, showTeacherControls, force);
+    return;
+  }
+
+  setView(viewName, `
+    <section class="screen compliment-mode">
+      <div class="status-bar">
+        <span class="pill gold">칭찬 카드 결과</span>
+        ${showTeacherControls ? `
+          <div class="button-row">
+            <button class="btn success" data-action="compliment-next-card" type="button">다음 칭찬으로 이동</button>
+            <button class="btn ghost" data-action="finish" type="button">최종 랭킹 보기</button>
+          </div>
+        ` : ""}
+      </div>
+
+      <section class="panel warm-panel">
+        <p class="eyebrow">칭찬 대상</p>
+        <h1>${escapeHtml(compliment.targetName)}</h1>
+        <p class="lead">작성자: <strong>${escapeHtml(compliment.authorName)}</strong></p>
+        ${renderComplimentClueCards(normalizeComplimentClues(compliment.clues))}
+      </section>
+
+      <div class="grid-2">
+        <section class="panel">
+          <h3>이번 칭찬 점수</h3>
+          ${renderComplimentScoreEvents(compliment)}
+        </section>
+        <section class="panel">
+          <h3>현재 누적 랭킹</h3>
+          ${renderRanking(getCumulativeRanking().slice(0, 8))}
+        </section>
+      </div>
+    </section>
+  `, () => {
+    document.querySelector("[data-action='compliment-next-card']")?.addEventListener("click", nextComplimentCard);
+    document.querySelector("[data-action='finish']")?.addEventListener("click", finishGame);
+  }, force);
+}
+
 function renderStudentQuiz(force = false) {
   const questions = getQuestions();
   const currentIndex = Number(state.room.currentQuestionIndex || 0);
@@ -464,6 +807,11 @@ function renderTeacherDashboard(force = true) {
     return;
   }
 
+  if (getRoomMode() === "compliment") {
+    renderComplimentTeacherDashboard(force);
+    return;
+  }
+
   const questions = getQuestions();
   const students = getStudents();
   const connectedCount = students.filter((student) => student.connected).length;
@@ -511,6 +859,7 @@ function renderTeacherDashboard(force = true) {
 
       <div class="teacher-grid">
         <aside class="panel">
+          ${renderTeacherModeControls()}
           <h2>진행 controls</h2>
           <div class="button-row">
             <button class="btn primary" data-action="start" type="button" ${questions.length ? "" : "disabled"}>게임 시작</button>
@@ -519,7 +868,7 @@ function renderTeacherDashboard(force = true) {
             <button class="btn success" data-action="next" type="button" ${questions.length ? "" : "disabled"}>다음 문제</button>
             <button class="btn ghost" data-action="finish" type="button" ${questions.length ? "" : "disabled"}>누적 랭킹 보기</button>
             <button class="btn danger" data-action="reset" type="button">게임 초기화</button>
-            <button class="btn danger" data-action="clear-room" type="button">학생/문제 목록 초기화</button>
+            <button class="btn danger" data-action="clear-room" type="button">학생/자료 목록 초기화</button>
           </div>
 
           <div class="notice info">
@@ -554,6 +903,9 @@ function renderTeacherDashboard(force = true) {
   `, () => {
     document.querySelector("#backHomeBtn").addEventListener("click", renderHome);
     document.querySelector("#copyRoomCodeBtn").addEventListener("click", copyRoomCode);
+    document.querySelectorAll("[data-switch-mode]").forEach((button) => {
+      button.addEventListener("click", () => switchRoomMode(button.dataset.switchMode));
+    });
     document.querySelectorAll("[data-action]").forEach((button) => {
       button.addEventListener("click", () => handleTeacherAction(button.dataset.action));
     });
@@ -576,6 +928,112 @@ function renderTeacherDashboard(force = true) {
   }, force);
 }
 
+function renderComplimentTeacherDashboard(force = true) {
+  const compliments = getCompliments();
+  const students = getStudents();
+  const connectedCount = students.filter((student) => student.connected).length;
+  const status = state.room.status || "waiting";
+  const currentIndex = Number(state.room.currentComplimentIndex ?? -1);
+  const currentCompliment = compliments[currentIndex];
+
+  setView("teacher-compliment-dashboard", `
+    <section class="screen compliment-mode">
+      <div class="status-bar">
+        <div>
+          <p class="eyebrow">교사 화면</p>
+          <h1>칭찬 스무고개</h1>
+        </div>
+        <button class="btn ghost" id="backHomeBtn" type="button">처음으로</button>
+      </div>
+
+      <div class="panel warm-panel">
+        <div class="status-bar">
+          <div>
+            <p class="muted small">학생들에게 알려 줄 방 코드</p>
+            <div class="room-code">${escapeHtml(state.roomCode)}</div>
+          </div>
+          <div class="button-row">
+            <span class="pill ${statusPillClass(status)}">${statusLabel(status)}</span>
+            <button class="btn ghost" id="copyRoomCodeBtn" type="button">방 코드 복사</button>
+          </div>
+        </div>
+
+        <div class="stats">
+          <div class="stat">
+            <span class="muted">칭찬 카드</span>
+            <span class="num">${compliments.length}</span>
+          </div>
+          <div class="stat">
+            <span class="muted">접속 학생</span>
+            <span class="num">${connectedCount}</span>
+          </div>
+          <div class="stat">
+            <span class="muted">전체 학생</span>
+            <span class="num">${students.length}</span>
+          </div>
+        </div>
+      </div>
+
+      <div class="teacher-grid">
+        <aside class="panel">
+          ${renderTeacherModeControls()}
+          <h2>진행 controls</h2>
+          <div class="button-row">
+            <button class="btn primary" data-action="start-compliment" type="button" ${compliments.length ? "" : "disabled"}>게임 시작</button>
+            <button class="btn success" data-action="compliment-next-clue" type="button" ${currentCompliment && status === "playing" && canShowNextComplimentClue(currentCompliment) ? "" : "disabled"}>다음 단서 공개</button>
+            <button class="btn warn" data-action="compliment-reveal-target" type="button" ${currentCompliment && status === "playing" ? "" : "disabled"}>칭찬 대상 공개</button>
+            <button class="btn primary" data-action="compliment-author-guess" type="button" ${currentCompliment && status === "targetReveal" ? "" : "disabled"}>작성자 추리 시작</button>
+            <button class="btn warn" data-action="compliment-reveal-author" type="button" ${currentCompliment && status === "authorGuess" ? "" : "disabled"}>작성자 공개</button>
+            <button class="btn success" data-action="compliment-next-card" type="button" ${currentCompliment && status === "authorReveal" ? "" : "disabled"}>다음 칭찬</button>
+            <button class="btn ghost" data-action="finish" type="button" ${compliments.length ? "" : "disabled"}>누적 랭킹 보기</button>
+            <button class="btn danger" data-action="reset" type="button">게임 초기화</button>
+            <button class="btn danger" data-action="clear-room" type="button">학생/자료 목록 초기화</button>
+          </div>
+
+          <div class="notice info">
+            칭찬 카드는 승인 없이 바로 게임에 사용됩니다. 문제가 있는 카드는 대기 상태에서 삭제할 수 있습니다.
+          </div>
+
+          <section class="panel tight">
+            <h3>참여 학생</h3>
+            ${renderStudentList(students)}
+          </section>
+        </aside>
+
+        <div class="screen">
+          <section class="panel warm-panel">
+            <h2>현재 칭찬 카드</h2>
+            ${renderTeacherCurrentCompliment(currentCompliment, currentIndex, compliments.length, status)}
+          </section>
+
+          <div class="grid-2">
+            <section class="panel">
+              <h3>제출된 칭찬 카드</h3>
+              ${renderTeacherComplimentList(compliments, status)}
+            </section>
+            <section class="panel">
+              <h3>누적 랭킹</h3>
+              ${renderRanking(getCumulativeRanking().slice(0, 8))}
+            </section>
+          </div>
+        </div>
+      </div>
+    </section>
+  `, () => {
+    document.querySelector("#backHomeBtn").addEventListener("click", renderHome);
+    document.querySelector("#copyRoomCodeBtn").addEventListener("click", copyRoomCode);
+    document.querySelectorAll("[data-switch-mode]").forEach((button) => {
+      button.addEventListener("click", () => switchRoomMode(button.dataset.switchMode));
+    });
+    document.querySelectorAll("[data-action]").forEach((button) => {
+      button.addEventListener("click", () => handleTeacherAction(button.dataset.action));
+    });
+    document.querySelectorAll("[data-delete-compliment]").forEach((button) => {
+      button.addEventListener("click", () => deleteCompliment(button.dataset.deleteCompliment));
+    });
+  }, force);
+}
+
 function renderFinalResult(viewName, showTeacherControls, force = false) {
   const ranking = getCumulativeRanking();
   const [first, second, third] = ranking;
@@ -587,7 +1045,7 @@ function renderFinalResult(viewName, showTeacherControls, force = false) {
         ${showTeacherControls ? `
           <div class="button-row">
             <button class="btn danger" data-action="reset" type="button">다시 시작 준비</button>
-            <button class="btn danger" data-action="clear-room" type="button">학생/문제 목록 초기화</button>
+            <button class="btn danger" data-action="clear-room" type="button">학생/자료 목록 초기화</button>
           </div>
         ` : ""}
       </div>
@@ -648,6 +1106,10 @@ async function enterStudent() {
     state.studentId = getOrCreateStudentId();
     saveStudentSession();
 
+    const roomData = snapshot.val() || {};
+    const duplicateName = Object.entries(roomData.students || {}).some(([studentId, student]) => {
+      return studentId !== state.studentId && cleanText(student?.name) === name;
+    });
     const studentPath = ref(db, `rooms/${code}/students/${state.studentId}`);
     const existingStudent = (await get(studentPath)).val();
 
@@ -663,6 +1125,9 @@ async function enterStudent() {
     onDisconnect(ref(db, `rooms/${code}/students/${state.studentId}/lastSeen`)).set(serverTimestamp());
 
     subscribeToRoom(code);
+    if (duplicateName) {
+      showToast("같은 이름으로 이미 입장한 학생이 있습니다. 필요하면 이름을 구분해서 입력해 주세요.", "error");
+    }
   } catch (error) {
     console.error(error);
     showToast("입장 중 오류가 발생했습니다. 인터넷 연결과 방 코드를 확인해 주세요.", "error");
@@ -678,6 +1143,7 @@ async function enterTeacher() {
   const password = document.querySelector("#teacherPassword").value;
   const codeInput = normalizeRoomCode(document.querySelector("#teacherRoomCode").value);
   const code = codeInput || generateRoomCode();
+  const selectedMode = getSelectedTeacherMode();
 
   if (password !== TEACHER_PASSWORD) {
     showToast("관리자 비밀번호가 맞지 않습니다.", "error");
@@ -688,14 +1154,36 @@ async function enterTeacher() {
     const snapshot = await get(roomRef(code));
     if (!snapshot.exists()) {
       await set(roomRef(code), {
+        mode: selectedMode,
         status: "waiting",
         currentQuestionIndex: -1,
+        currentComplimentIndex: -1,
+        currentClueIndex: 0,
         timeLimit: DEFAULT_TIME_LIMIT_SECONDS,
         createdAt: serverTimestamp(),
         students: {},
         questions: {},
+        compliments: {},
         answers: {}
       });
+    } else {
+      const room = snapshot.val();
+      const roomMode = room.mode || "quiz";
+      if ((room.status || "waiting") === "waiting" && roomMode !== selectedMode) {
+        await update(roomRef(code), {
+          mode: selectedMode,
+          currentQuestionIndex: -1,
+          currentComplimentIndex: -1,
+          currentClueIndex: 0,
+          questionOrder: null,
+          complimentOrder: null,
+          answers: null,
+          complimentAnswers: null,
+          complimentBonuses: null
+        });
+      } else if (!room.mode) {
+        await update(roomRef(code), { mode: "quiz" });
+      }
     }
 
     state.role = "teacher";
@@ -788,6 +1276,67 @@ async function submitQuestion(event) {
   }
 }
 
+async function submitCompliment(event) {
+  event.preventDefault();
+
+  const name = cleanText(document.querySelector("#complimentAuthorName").value);
+  const targetStudentId = cleanText(document.querySelector("#complimentTarget").value);
+  const targetStudent = getStudents().find((student) => student.id === targetStudentId);
+  const clues = [0, 1, 2, 3, 4]
+    .map((index) => cleanText(document.querySelector(`#complimentClue${index}`).value))
+    .filter(Boolean);
+
+  if (!name) {
+    showToast("이름을 입력해 주세요.", "error");
+    return;
+  }
+
+  if (!targetStudentId || !targetStudent) {
+    showToast("칭찬할 친구를 선택해 주세요.", "error");
+    return;
+  }
+
+  if (targetStudentId === state.studentId) {
+    showToast("자기 자신은 칭찬 대상으로 선택할 수 없습니다.", "error");
+    return;
+  }
+
+  if (clues.length < 4) {
+    showToast("칭찬 단서는 최소 4개 이상 입력해 주세요.", "error");
+    return;
+  }
+
+  try {
+    const complimentPath = ref(db, `rooms/${state.roomCode}/compliments/${state.studentId}`);
+    const existing = (await get(complimentPath)).val();
+
+    state.studentName = name;
+    saveStudentSession();
+
+    await update(ref(db, `rooms/${state.roomCode}/students/${state.studentId}`), {
+      name,
+      connected: true,
+      lastSeen: serverTimestamp()
+    });
+
+    await set(complimentPath, {
+      authorStudentId: state.studentId,
+      authorName: name,
+      targetStudentId,
+      targetName: targetStudent.name,
+      clues,
+      createdAt: existing?.createdAt || serverTimestamp(),
+      updatedAt: serverTimestamp()
+    });
+
+    showToast("칭찬 카드가 제출되었습니다.", "success");
+    renderComplimentWaiting(true);
+  } catch (error) {
+    console.error(error);
+    showToast("칭찬 카드를 저장하지 못했습니다. 잠시 후 다시 시도해 주세요.", "error");
+  }
+}
+
 async function submitAnswer(selectedIndex) {
   if (state.answering) {
     return;
@@ -854,6 +1403,106 @@ async function submitAnswer(selectedIndex) {
   }
 }
 
+async function submitComplimentTargetGuess(selectedStudentId) {
+  const compliment = getCurrentCompliment();
+  if (!compliment || state.room.status !== "playing") {
+    showToast("지금은 칭찬 대상을 제출할 수 없습니다.", "error");
+    return;
+  }
+
+  if (compliment.authorStudentId === state.studentId) {
+    showToast("내가 작성한 칭찬은 맞힐 수 없습니다.", "error");
+    return;
+  }
+
+  const clueIndex = Number(state.room.currentClueIndex || 0);
+  const answerPath = ref(db, `rooms/${state.roomCode}/complimentAnswers/${compliment.id}/targetGuesses/${state.studentId}`);
+  const existing = (await get(answerPath)).val();
+
+  if (Number.isInteger(existing?.firstCorrectClueIndex)) {
+    showToast("이미 이 칭찬의 대상을 맞혔습니다.", "error");
+    return;
+  }
+
+  if (existing?.guesses?.[clueIndex]) {
+    showToast("이번 단서에서는 이미 추리했습니다.", "error");
+    return;
+  }
+
+  const selectedName = getStudentNameById(selectedStudentId, "선택한 학생");
+  const isCorrect = selectedStudentId === compliment.targetStudentId;
+  const scoreEarned = isCorrect ? getComplimentTargetPoint(clueIndex) : 0;
+  const updates = {
+    name: state.studentName,
+    [`guesses/${clueIndex}`]: {
+      selectedStudentId,
+      selectedName,
+      isCorrect,
+      submittedAt: serverTimestamp()
+    }
+  };
+
+  if (isCorrect) {
+    updates.firstCorrectClueIndex = clueIndex;
+    updates.scoreEarned = scoreEarned;
+  }
+
+  try {
+    await update(answerPath, updates);
+    if (scoreEarned > 0) {
+      await incrementStudentScore(state.studentId, scoreEarned);
+    }
+    showToast(isCorrect ? `정답입니다! ${scoreEarned}점을 얻었습니다.` : "아쉽지만 아니에요. 다음 단서에서 다시 도전해 보세요.", isCorrect ? "success" : "");
+    renderComplimentTargetGuess(true);
+  } catch (error) {
+    console.error(error);
+    showToast("추리 답변을 저장하지 못했습니다. 잠시 후 다시 시도해 주세요.", "error");
+  }
+}
+
+async function submitComplimentAuthorGuess(selectedStudentId) {
+  const compliment = getCurrentCompliment();
+  if (!compliment || state.room.status !== "authorGuess") {
+    showToast("지금은 작성자 추리를 제출할 수 없습니다.", "error");
+    return;
+  }
+
+  if (compliment.authorStudentId === state.studentId) {
+    showToast("내가 작성한 칭찬의 작성자 추리는 할 수 없습니다.", "error");
+    return;
+  }
+
+  const answerPath = ref(db, `rooms/${state.roomCode}/complimentAnswers/${compliment.id}/authorGuesses/${state.studentId}`);
+  const existing = await get(answerPath);
+  if (existing.exists()) {
+    showToast("작성자 추리는 한 번만 제출할 수 있습니다.", "error");
+    return;
+  }
+
+  const selectedName = getStudentNameById(selectedStudentId, "선택한 학생");
+  const isCorrect = selectedStudentId === compliment.authorStudentId;
+  const scoreEarned = isCorrect ? COMPLIMENT_AUTHOR_BONUS : 0;
+
+  try {
+    await set(answerPath, {
+      name: state.studentName,
+      selectedStudentId,
+      selectedName,
+      isCorrect,
+      scoreEarned,
+      submittedAt: serverTimestamp()
+    });
+    if (scoreEarned > 0) {
+      await incrementStudentScore(state.studentId, scoreEarned);
+    }
+    showToast(isCorrect ? `작성자 정답! ${scoreEarned}점을 얻었습니다.` : "작성자 추리가 제출되었습니다.", isCorrect ? "success" : "");
+    renderComplimentAuthorGuess(true);
+  } catch (error) {
+    console.error(error);
+    showToast("작성자 추리를 저장하지 못했습니다. 잠시 후 다시 시도해 주세요.", "error");
+  }
+}
+
 async function ensureOwnQuestionSkipped(question) {
   const key = `${question.id}:${state.studentId}`;
   if (state.skipWriteKey === key) {
@@ -888,7 +1537,13 @@ function handleTeacherAction(action) {
     next: nextQuestion,
     finish: finishGame,
     reset: resetGame,
-    "clear-room": clearRoomLists
+    "clear-room": clearRoomLists,
+    "start-compliment": startComplimentGame,
+    "compliment-next-clue": showNextComplimentClue,
+    "compliment-reveal-target": revealComplimentTarget,
+    "compliment-author-guess": startComplimentAuthorGuess,
+    "compliment-reveal-author": revealComplimentAuthor,
+    "compliment-next-card": nextComplimentCard
   };
   actions[action]?.();
 }
@@ -921,6 +1576,137 @@ async function startGame() {
   } catch (error) {
     console.error(error);
     showToast("게임을 시작하지 못했습니다.", "error");
+  }
+}
+
+async function startComplimentGame() {
+  const compliments = getCompliments();
+  if (!compliments.length) {
+    showToast("시작할 칭찬 카드가 없습니다.", "error");
+    return;
+  }
+
+  const complimentOrder = shuffleArray(compliments.map((compliment) => compliment.id));
+  const updates = {
+    status: "playing",
+    currentComplimentIndex: 0,
+    currentClueIndex: 0,
+    complimentOrder,
+    complimentAnswers: null,
+    complimentBonuses: null,
+    answers: null
+  };
+
+  getStudents().forEach((student) => {
+    updates[`students/${student.id}/score`] = 0;
+  });
+
+  try {
+    await update(roomRef(state.roomCode), updates);
+    showToast("칭찬 스무고개를 시작했습니다.", "success");
+  } catch (error) {
+    console.error(error);
+    showToast("칭찬 스무고개를 시작하지 못했습니다.", "error");
+  }
+}
+
+async function showNextComplimentClue() {
+  const compliment = getCurrentCompliment();
+  if (!compliment) {
+    return;
+  }
+
+  const clueIndex = Number(state.room.currentClueIndex || 0);
+  const maxIndex = normalizeComplimentClues(compliment.clues).length - 1;
+  if (clueIndex >= maxIndex) {
+    showToast("이미 마지막 단서까지 공개되었습니다.", "error");
+    return;
+  }
+
+  try {
+    await update(roomRef(state.roomCode), {
+      status: "playing",
+      currentClueIndex: clueIndex + 1
+    });
+  } catch (error) {
+    console.error(error);
+    showToast("다음 단서를 공개하지 못했습니다.", "error");
+  }
+}
+
+async function revealComplimentTarget() {
+  const compliment = getCurrentCompliment();
+  if (!compliment) {
+    return;
+  }
+
+  try {
+    await awardComplimentTargetBonus(compliment);
+    await update(roomRef(state.roomCode), {
+      status: "targetReveal"
+    });
+    showToast("칭찬 대상을 공개했습니다.", "success");
+  } catch (error) {
+    console.error(error);
+    showToast("칭찬 대상을 공개하지 못했습니다.", "error");
+  }
+}
+
+async function startComplimentAuthorGuess() {
+  const compliment = getCurrentCompliment();
+  if (!compliment) {
+    return;
+  }
+
+  try {
+    await update(roomRef(state.roomCode), {
+      status: "authorGuess"
+    });
+    showToast("작성자 추리 라운드를 시작했습니다.", "success");
+  } catch (error) {
+    console.error(error);
+    showToast("작성자 추리를 시작하지 못했습니다.", "error");
+  }
+}
+
+async function revealComplimentAuthor() {
+  const compliment = getCurrentCompliment();
+  if (!compliment) {
+    return;
+  }
+
+  try {
+    await update(roomRef(state.roomCode), {
+      status: "authorReveal"
+    });
+    showToast("작성자를 공개했습니다.", "success");
+  } catch (error) {
+    console.error(error);
+    showToast("작성자를 공개하지 못했습니다.", "error");
+  }
+}
+
+async function nextComplimentCard() {
+  const compliments = getCompliments();
+  if (!compliments.length) {
+    return;
+  }
+
+  const nextIndex = Number(state.room.currentComplimentIndex || 0) + 1;
+  if (nextIndex >= compliments.length) {
+    finishGame();
+    return;
+  }
+
+  try {
+    await update(roomRef(state.roomCode), {
+      status: "playing",
+      currentComplimentIndex: nextIndex,
+      currentClueIndex: 0
+    });
+  } catch (error) {
+    console.error(error);
+    showToast("다음 칭찬 카드로 이동하지 못했습니다.", "error");
   }
 }
 
@@ -1010,10 +1796,15 @@ async function resetGame() {
   const updates = {
     status: "waiting",
     currentQuestionIndex: -1,
+    currentComplimentIndex: -1,
+    currentClueIndex: 0,
     questionStartedAt: null,
     resultOpenedAt: null,
     finishedAt: null,
     questionOrder: null,
+    complimentOrder: null,
+    complimentBonuses: null,
+    complimentAnswers: null,
     answers: null
   };
 
@@ -1031,7 +1822,7 @@ async function resetGame() {
 }
 
 async function clearRoomLists() {
-  const ok = window.confirm("학생 목록, 문제 목록, 답변, 점수를 모두 지울까요? 이 작업은 되돌릴 수 없습니다.");
+  const ok = window.confirm("학생 목록, 문제/칭찬 자료, 답변, 점수를 모두 지울까요? 이 작업은 되돌릴 수 없습니다.");
   if (!ok) {
     return;
   }
@@ -1049,14 +1840,20 @@ async function clearRoomLists() {
       resultOpenedAt: null,
       finishedAt: null,
       questionOrder: null,
+      complimentOrder: null,
+      complimentBonuses: null,
+      currentComplimentIndex: -1,
+      currentClueIndex: 0,
       students: null,
       questions: null,
-      answers: null
+      compliments: null,
+      answers: null,
+      complimentAnswers: null
     });
-    showToast("학생 목록과 문제 목록을 모두 초기화했습니다.", "success");
+    showToast("학생 목록과 제출 자료를 모두 초기화했습니다.", "success");
   } catch (error) {
     console.error(error);
-    showToast("학생/문제 목록을 초기화하지 못했습니다.", "error");
+    showToast("학생/자료 목록을 초기화하지 못했습니다.", "error");
   }
 }
 
@@ -1078,6 +1875,28 @@ async function deleteQuestion(questionId) {
   } catch (error) {
     console.error(error);
     showToast("문제를 삭제하지 못했습니다.", "error");
+  }
+}
+
+async function deleteCompliment(complimentId) {
+  if ((state.room?.status || "waiting") !== "waiting") {
+    showToast("칭찬 카드 삭제는 게임 시작 전 대기 상태에서만 해 주세요.", "error");
+    return;
+  }
+
+  const ok = window.confirm("이 칭찬 카드를 삭제할까요?");
+  if (!ok) {
+    return;
+  }
+
+  try {
+    await remove(ref(db, `rooms/${state.roomCode}/compliments/${complimentId}`));
+    await remove(ref(db, `rooms/${state.roomCode}/complimentAnswers/${complimentId}`));
+    await remove(ref(db, `rooms/${state.roomCode}/complimentBonuses/target/${complimentId}`));
+    showToast("칭찬 카드를 삭제했습니다.", "success");
+  } catch (error) {
+    console.error(error);
+    showToast("칭찬 카드를 삭제하지 못했습니다.", "error");
   }
 }
 
@@ -1126,6 +1945,47 @@ function roomRef(code) {
   return ref(db, `rooms/${code}`);
 }
 
+function getRoomMode() {
+  return state.room?.mode || "quiz";
+}
+
+function getSelectedTeacherMode() {
+  return document.querySelector("input[name='teacherMode']:checked")?.value || "quiz";
+}
+
+async function switchRoomMode(nextMode) {
+  if (!["quiz", "compliment"].includes(nextMode)) {
+    return;
+  }
+
+  if (getRoomMode() === nextMode) {
+    return;
+  }
+
+  if ((state.room?.status || "waiting") !== "waiting") {
+    showToast("게임 모드는 대기 상태에서만 바꿀 수 있습니다.", "error");
+    return;
+  }
+
+  try {
+    await update(roomRef(state.roomCode), {
+      mode: nextMode,
+      currentQuestionIndex: -1,
+      currentComplimentIndex: -1,
+      currentClueIndex: 0,
+      questionOrder: null,
+      complimentOrder: null,
+      answers: null,
+      complimentAnswers: null,
+      complimentBonuses: null
+    });
+    showToast(nextMode === "quiz" ? "자기소개 퀴즈 배틀 모드로 바꿨습니다." : "칭찬 스무고개 모드로 바꿨습니다.", "success");
+  } catch (error) {
+    console.error(error);
+    showToast("게임 모드를 바꾸지 못했습니다.", "error");
+  }
+}
+
 function getQuestions() {
   const raw = state.room?.questions || {};
   const questions = Object.entries(raw)
@@ -1159,6 +2019,39 @@ function getQuestions() {
   return [...orderedQuestions, ...remainingQuestions];
 }
 
+function getCompliments() {
+  const raw = state.room?.compliments || {};
+  const compliments = Object.entries(raw)
+    .map(([id, value]) => ({
+      id,
+      ...value,
+      clues: normalizeComplimentClues(value.clues)
+    }))
+    .filter((compliment) => compliment.authorStudentId && compliment.targetStudentId && compliment.clues.length >= 4)
+    .sort((a, b) => {
+      const createdA = Number(a.createdAt || 0);
+      const createdB = Number(b.createdAt || 0);
+      if (createdA !== createdB) {
+        return createdA - createdB;
+      }
+      return String(a.authorName || "").localeCompare(String(b.authorName || ""), "ko");
+    });
+
+  const complimentOrder = normalizeQuestionOrder(state.room?.complimentOrder);
+  if (!complimentOrder.length) {
+    return compliments;
+  }
+
+  const complimentMap = new Map(compliments.map((compliment) => [compliment.id, compliment]));
+  const orderedCompliments = complimentOrder
+    .map((complimentId) => complimentMap.get(complimentId))
+    .filter(Boolean);
+  const orderedIds = new Set(orderedCompliments.map((compliment) => compliment.id));
+  const remainingCompliments = compliments.filter((compliment) => !orderedIds.has(compliment.id));
+
+  return [...orderedCompliments, ...remainingCompliments];
+}
+
 function getStudents() {
   const raw = state.room?.students || {};
   return Object.entries(raw)
@@ -1188,6 +2081,108 @@ function getMyAnswer(questionId) {
 
 function getMyScore() {
   return Number(state.room?.students?.[state.studentId]?.score || 0);
+}
+
+function getCurrentCompliment() {
+  const compliments = getCompliments();
+  const index = Number(state.room?.currentComplimentIndex || 0);
+  return compliments[index] || null;
+}
+
+function findComplimentByAuthor(studentId) {
+  return getCompliments().find((compliment) => compliment.authorStudentId === studentId || compliment.id === studentId) || null;
+}
+
+function getMyComplimentTargetAnswer(complimentId) {
+  return state.room?.complimentAnswers?.[complimentId]?.targetGuesses?.[state.studentId] || null;
+}
+
+function getMyComplimentAuthorAnswer(complimentId) {
+  return state.room?.complimentAnswers?.[complimentId]?.authorGuesses?.[state.studentId] || null;
+}
+
+function getComplimentTargetGuesses(complimentId) {
+  const raw = state.room?.complimentAnswers?.[complimentId]?.targetGuesses || {};
+  return Object.entries(raw).map(([studentId, answer]) => ({ studentId, ...answer }));
+}
+
+function getComplimentAuthorGuesses(complimentId) {
+  const raw = state.room?.complimentAnswers?.[complimentId]?.authorGuesses || {};
+  return Object.entries(raw).map(([studentId, answer]) => ({ studentId, ...answer }));
+}
+
+function getComplimentTargetPoint(clueIndex) {
+  return Number(COMPLIMENT_TARGET_POINTS[clueIndex] ?? COMPLIMENT_TARGET_POINTS[COMPLIMENT_TARGET_POINTS.length - 1] ?? 0);
+}
+
+function canShowNextComplimentClue(compliment) {
+  const clueIndex = Number(state.room?.currentClueIndex || 0);
+  return clueIndex < normalizeComplimentClues(compliment?.clues).length - 1;
+}
+
+function getComplimentTargetOptions(editingCompliment = null) {
+  const options = getStudents().filter((student) => student.id !== state.studentId);
+  if (editingCompliment?.targetStudentId && !options.some((student) => student.id === editingCompliment.targetStudentId)) {
+    options.push({
+      id: editingCompliment.targetStudentId,
+      name: editingCompliment.targetName || "기존 칭찬 대상",
+      score: 0,
+      connected: false
+    });
+  }
+  return options;
+}
+
+function getComplimentGuessOptions(compliment) {
+  const options = getStudents().slice();
+  [
+    { id: compliment?.targetStudentId, name: compliment?.targetName },
+    { id: compliment?.authorStudentId, name: compliment?.authorName }
+  ].forEach((candidate) => {
+    if (candidate.id && candidate.name && !options.some((student) => student.id === candidate.id)) {
+      options.push({
+        id: candidate.id,
+        name: candidate.name,
+        score: 0,
+        connected: false
+      });
+    }
+  });
+  return options.sort((a, b) => String(a.name).localeCompare(String(b.name), "ko"));
+}
+
+function getStudentNameById(studentId, fallback = "이름 없음") {
+  return getStudents().find((student) => student.id === studentId)?.name || fallback;
+}
+
+async function incrementStudentScore(studentId, points) {
+  if (!studentId || !points) {
+    return;
+  }
+
+  await runTransaction(ref(db, `rooms/${state.roomCode}/students/${studentId}/score`), (score) => {
+    return Number(score || 0) + Number(points || 0);
+  });
+}
+
+async function awardComplimentTargetBonus(compliment) {
+  if (!compliment?.targetStudentId || !COMPLIMENT_TARGET_BONUS) {
+    return;
+  }
+
+  const bonusPath = ref(db, `rooms/${state.roomCode}/complimentBonuses/target/${compliment.id}`);
+  const existing = await get(bonusPath);
+  if (existing.exists()) {
+    return;
+  }
+
+  await set(bonusPath, {
+    targetStudentId: compliment.targetStudentId,
+    targetName: compliment.targetName,
+    scoreEarned: COMPLIMENT_TARGET_BONUS,
+    awardedAt: serverTimestamp()
+  });
+  await incrementStudentScore(compliment.targetStudentId, COMPLIMENT_TARGET_BONUS);
 }
 
 function findQuestionByAuthor(name) {
@@ -1247,6 +2242,162 @@ function getAnswerCounts(question) {
 // =========================
 // 렌더 조각
 // =========================
+
+function renderTeacherModeControls() {
+  const mode = getRoomMode();
+  const canSwitch = (state.room?.status || "waiting") === "waiting";
+
+  return `
+    <section class="mode-switcher">
+      <p class="label">게임 모드</p>
+      <div class="segmented">
+        <button class="btn ${mode === "quiz" ? "primary" : "ghost"}" data-switch-mode="quiz" type="button" ${canSwitch ? "" : "disabled"}>자기소개 퀴즈</button>
+        <button class="btn ${mode === "compliment" ? "primary" : "ghost"}" data-switch-mode="compliment" type="button" ${canSwitch ? "" : "disabled"}>칭찬 스무고개</button>
+      </div>
+      ${canSwitch ? "" : `<p class="muted small">게임 진행 중에는 모드를 바꿀 수 없습니다.</p>`}
+    </section>
+  `;
+}
+
+function renderComplimentClueCards(clues) {
+  if (!clues.length) {
+    return `<div class="empty">공개된 단서가 없습니다.</div>`;
+  }
+
+  return `
+    <div class="clue-stack">
+      ${clues.map((clue, index) => `
+        <article class="clue-card">
+          <span class="pill gold">단서 ${index + 1}</span>
+          <p>${escapeHtml(clue)}</p>
+        </article>
+      `).join("")}
+    </div>
+  `;
+}
+
+function renderStudentChoiceButtons(students, dataName, disabled = false) {
+  if (!students.length) {
+    return `<div class="empty">선택할 학생이 없습니다.</div>`;
+  }
+
+  return `
+    <div class="student-choice-grid">
+      ${students.map((student) => `
+        <button class="student-choice-btn" data-${dataName}="${escapeAttr(student.id)}" type="button" ${disabled ? "disabled" : ""}>
+          <strong>${escapeHtml(student.name)}</strong>
+          ${student.connected ? `<span class="pill green">접속 중</span>` : `<span class="pill">대상 가능</span>`}
+        </button>
+      `).join("")}
+    </div>
+  `;
+}
+
+function renderTeacherCurrentCompliment(compliment, currentIndex, total, status) {
+  if (!compliment) {
+    return `<div class="empty">아직 진행 중인 칭찬 카드가 없습니다.</div>`;
+  }
+
+  const clueIndex = Number(state.room.currentClueIndex || 0);
+  const clues = normalizeComplimentClues(compliment.clues);
+  const visibleClues = status === "playing" ? clues.slice(0, clueIndex + 1) : clues;
+
+  return `
+    <div class="question-card warm-card">
+      <div class="status-bar">
+        <span class="pill gold">${currentIndex + 1} / ${total}</span>
+        <span class="pill ${statusPillClass(status)}">${statusLabel(status)}</span>
+      </div>
+      <div class="grid-2">
+        <div>
+          <p class="muted small">칭찬 대상</p>
+          <h2>${status === "playing" ? "아직 비공개" : escapeHtml(compliment.targetName)}</h2>
+        </div>
+        <div>
+          <p class="muted small">칭찬 작성자</p>
+          <h2>${status === "authorReveal" ? escapeHtml(compliment.authorName) : "아직 비공개"}</h2>
+        </div>
+      </div>
+      <p class="muted">교사용 확인: 대상 ${escapeHtml(compliment.targetName)} / 작성자 ${escapeHtml(compliment.authorName)}</p>
+      ${renderComplimentClueCards(visibleClues)}
+      ${status === "authorReveal" ? `
+        <div>
+          <h3>이번 카드 결과</h3>
+          ${renderComplimentScoreEvents(compliment)}
+        </div>
+      ` : ""}
+    </div>
+  `;
+}
+
+function renderTeacherComplimentList(compliments, status) {
+  if (!compliments.length) {
+    return `<div class="empty">학생들이 칭찬 카드를 제출하면 여기에 표시됩니다.</div>`;
+  }
+
+  return `
+    <ul class="list">
+      ${compliments.map((compliment, index) => `
+        <li class="list-row split">
+          <div>
+            <p class="muted small">${index + 1}. 작성자 ${escapeHtml(compliment.authorName)} → 대상 ${escapeHtml(compliment.targetName)}</p>
+            <strong>${escapeHtml(normalizeComplimentClues(compliment.clues)[0] || "칭찬 단서")}</strong>
+            <p class="muted small">단서 ${normalizeComplimentClues(compliment.clues).length}개</p>
+          </div>
+          <button class="btn danger" data-delete-compliment="${escapeAttr(compliment.id)}" type="button" ${status === "waiting" ? "" : "disabled"}>삭제</button>
+        </li>
+      `).join("")}
+    </ul>
+  `;
+}
+
+function renderComplimentScoreEvents(compliment) {
+  const targetSuccesses = getComplimentTargetGuesses(compliment.id)
+    .filter((answer) => Number.isInteger(answer.firstCorrectClueIndex))
+    .sort((a, b) => Number(a.firstCorrectClueIndex) - Number(b.firstCorrectClueIndex));
+  const authorSuccesses = getComplimentAuthorGuesses(compliment.id)
+    .filter((answer) => answer.isCorrect)
+    .sort((a, b) => String(a.name || "").localeCompare(String(b.name || ""), "ko"));
+  const targetBonus = state.room?.complimentBonuses?.target?.[compliment.id];
+  const rows = [
+    ...targetSuccesses.map((answer) => ({
+      name: answer.name,
+      detail: `대상 추리 성공, 단서 ${Number(answer.firstCorrectClueIndex) + 1}`,
+      score: Number(answer.scoreEarned || 0)
+    })),
+    ...authorSuccesses.map((answer) => ({
+      name: answer.name,
+      detail: "작성자 추리 성공",
+      score: Number(answer.scoreEarned || 0)
+    }))
+  ];
+
+  if (targetBonus) {
+    rows.push({
+      name: targetBonus.targetName || compliment.targetName,
+      detail: "칭찬 대상 보너스",
+      score: Number(targetBonus.scoreEarned || COMPLIMENT_TARGET_BONUS)
+    });
+  }
+
+  if (!rows.length) {
+    return `<div class="empty">아직 이 카드에서 획득한 점수가 없습니다.</div>`;
+  }
+
+  return `
+    <ul class="list">
+      ${rows.map((row) => `
+        <li class="list-row split">
+          <div>
+            <strong>${escapeHtml(row.name || "이름 없음")}</strong>
+            <p class="muted small">${escapeHtml(row.detail)}</p>
+          </div>
+          <span class="score">+${row.score}</span>
+        </li>
+      `).join("")}
+    </ul>
+  `;
+}
 
 function renderTeacherCurrentQuestion(question, currentIndex, total, status) {
   if (!question) {
@@ -1488,6 +2639,14 @@ function normalizeChoices(choices = []) {
   return [0, 1, 2, 3].map((index) => String(choices?.[index] || ""));
 }
 
+function normalizeComplimentClues(clues = []) {
+  const source = Array.isArray(clues) ? clues : Object.values(clues || {});
+  return source
+    .map((clue) => cleanText(clue))
+    .filter(Boolean)
+    .slice(0, 5);
+}
+
 function normalizeQuestionOrder(order) {
   if (Array.isArray(order)) {
     return order.filter(Boolean).map(String);
@@ -1543,8 +2702,11 @@ function saveStudentSession() {
 function statusLabel(status) {
   const labels = {
     waiting: "대기 중",
-    playing: "문제 진행 중",
+    playing: "진행 중",
     result: "결과 공개",
+    targetReveal: "칭찬 대상 공개",
+    authorGuess: "작성자 추리",
+    authorReveal: "작성자 공개",
     finished: "최종 결과"
   };
   return labels[status] || "대기 중";
@@ -1555,6 +2717,9 @@ function statusPillClass(status) {
     waiting: "blue",
     playing: "green",
     result: "gold",
+    targetReveal: "gold",
+    authorGuess: "blue",
+    authorReveal: "gold",
     finished: "red"
   };
   return classes[status] || "blue";
