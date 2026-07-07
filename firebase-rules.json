@@ -1,0 +1,80 @@
+{
+  "rules": {
+    ".read": false,
+    ".write": false,
+    "rooms": {
+      "$roomCode": {
+        ".read": true,
+        ".write": true,
+        "status": {
+          ".validate": "newData.val() === 'waiting' || newData.val() === 'playing' || newData.val() === 'result' || newData.val() === 'finished'"
+        },
+        "currentQuestionIndex": {
+          ".validate": "newData.isNumber() && newData.val() >= -1"
+        },
+        "timeLimit": {
+          ".validate": "newData.isNumber() && newData.val() >= 5 && newData.val() <= 120"
+        },
+        "students": {
+          "$studentId": {
+            "name": {
+              ".validate": "newData.isString() && newData.val().length > 0 && newData.val().length <= 20"
+            },
+            "score": {
+              ".validate": "newData.isNumber() && newData.val() >= 0"
+            },
+            "connected": {
+              ".validate": "newData.isBoolean()"
+            }
+          }
+        },
+        "questions": {
+          "$questionId": {
+            "authorName": {
+              ".validate": "newData.isString() && newData.val().length > 0 && newData.val().length <= 20"
+            },
+            "authorKey": {
+              ".validate": "newData.isString() && newData.val().length > 0 && newData.val().length <= 60"
+            },
+            "question": {
+              ".validate": "newData.isString() && newData.val().length > 0 && newData.val().length <= 160"
+            },
+            "choices": {
+              ".validate": "newData.hasChildren(['0', '1', '2', '3'])",
+              "$index": {
+                ".validate": "$index.matches(/^[0-3]$/) && newData.isString() && newData.val().length > 0 && newData.val().length <= 80"
+              }
+            },
+            "correctIndex": {
+              ".validate": "newData.isNumber() && newData.val() >= 0 && newData.val() <= 3"
+            }
+          }
+        },
+        "answers": {
+          "$questionId": {
+            "$studentId": {
+              "name": {
+                ".validate": "newData.isString() && newData.val().length > 0 && newData.val().length <= 20"
+              },
+              "selectedIndex": {
+                ".validate": "newData.isNumber() && newData.val() >= 0 && newData.val() <= 3"
+              },
+              "isCorrect": {
+                ".validate": "newData.isBoolean()"
+              },
+              "isSkipped": {
+                ".validate": "newData.isBoolean()"
+              },
+              "responseTime": {
+                ".validate": "newData.isNumber() && newData.val() >= 0 && newData.val() <= 120"
+              },
+              "scoreEarned": {
+                ".validate": "newData.isNumber() && newData.val() >= 0 && newData.val() <= 1000"
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}
