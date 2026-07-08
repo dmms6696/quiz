@@ -52,6 +52,15 @@ const ALLOW_SOLVE_OWN_QUESTION = true;
 // 교사 화면이 열려 있을 때 시간이 끝나면 자동으로 정답 공개 상태로 바꿉니다.
 const AUTO_REVEAL_WHEN_TIME_UP = true;
 
+// 교실 마피아 게임 기본 설정입니다.
+const DEFAULT_MAFIA_COUNT = 2;
+const DEFAULT_POLICE_COUNT = 1;
+const DEFAULT_DOCTOR_COUNT = 1;
+const DEFAULT_DISCUSSION_SECONDS = 180;
+const VOTE_TIE_RULE = "revote_then_skip";
+const REVEAL_ROLE_ON_ELIMINATION = true;
+const MAFIA_SELF_SELECT_ALLOWED = false;
+
 // =========================
 // 앱 상태
 // =========================
@@ -102,7 +111,7 @@ function renderHome() {
       <div class="hero">
         <p class="eyebrow">실시간 학급 참여 퀴즈</p>
         <h1>우리 반 퀴즈 배틀</h1>
-        <p class="lead">학생들이 직접 낸 자기소개형 4지선다 문제를 모아, 교실에서 바로 진행하는 실시간 퀴즈 게임입니다.</p>
+        <p class="lead">자기소개 퀴즈, 칭찬 스무고개, 교실 마피아를 한 방 코드로 진행하는 실시간 학급 게임입니다.</p>
       </div>
 
       ${db ? "" : `
@@ -115,7 +124,7 @@ function renderHome() {
         <section class="panel">
           <div>
             <h2>학생으로 입장</h2>
-            <p class="muted">방 코드와 이름을 입력한 뒤 자기 문제를 제출합니다.</p>
+            <p class="muted">방 코드와 이름을 입력하면 현재 모드에 맞는 학생 화면으로 이동합니다.</p>
           </div>
           <div class="form-grid">
             <div class="field">
@@ -161,6 +170,13 @@ function renderHome() {
                     <small>익명 칭찬 단서로 친구를 추리합니다.</small>
                   </span>
                 </label>
+                <label class="mode-tile">
+                  <input type="radio" name="teacherMode" value="mafia" />
+                  <span>
+                    <strong>교실 마피아 게임</strong>
+                    <small>역할 확인, 밤 행동, 토론, 투표를 패드로 진행합니다.</small>
+                  </span>
+                </label>
               </div>
             </div>
             <div class="button-row">
@@ -188,6 +204,11 @@ function renderStudentRoute() {
 
   if (getRoomMode() === "compliment") {
     renderComplimentStudentRoute();
+    return;
+  }
+
+  if (getRoomMode() === "mafia") {
+    renderMafiaStudentRoute();
     return;
   }
 
@@ -697,6 +718,296 @@ function renderComplimentCardResult(viewName, showTeacherControls, force = false
   }, force);
 }
 
+function renderMafiaStudentRoute() {
+  const status = state.room.status || "waiting";
+
+  if (status === "waiting") {
+    renderMafiaStudentWaiting(true);
+    return;
+  }
+
+  if (!getMafiaPlayer(state.studentId)) {
+    renderMafiaUnassigned(true);
+    return;
+  }
+
+  if (status === "roleAssigned" || status === "roleReveal") {
+    renderMafiaRoleReveal(true);
+    return;
+  }
+
+  if (status === "nightAction") {
+    renderMafiaNightAction(true);
+    return;
+  }
+
+  if (status === "nightResult") {
+    renderMafiaNightResult(true);
+    return;
+  }
+
+  if (status === "discussion") {
+    renderMafiaDiscussion(true);
+    return;
+  }
+
+  if (status === "voting") {
+    renderMafiaVoting(true);
+    return;
+  }
+
+  if (status === "voteResult") {
+    renderMafiaVoteResult(true);
+    return;
+  }
+
+  if (status === "roleRevealDead") {
+    renderMafiaRoleRevealDead(true);
+    return;
+  }
+
+  if (status === "finished") {
+    renderMafiaFinalResult("student-mafia-final", false, true);
+    return;
+  }
+
+  renderMafiaStudentWaiting(true);
+}
+
+function renderMafiaStudentWaiting(force = false) {
+  const students = getStudents();
+  const connectedCount = students.filter((student) => student.connected).length;
+
+  setView("mafia-student-waiting", `
+    <section class="screen mafia-mode">
+      <div class="status-bar">
+        <button class="btn ghost" id="backHomeBtn" type="button">처음으로</button>
+        <span class="pill red">교실 마피아 게임</span>
+        <span class="pill blue">방 코드 ${escapeHtml(state.roomCode)}</span>
+      </div>
+
+      <div class="panel mafia-panel">
+        <h2>선생님이 게임을 시작할 때까지 기다려 주세요.</h2>
+        <p class="lead">현재 입장한 학생은 ${students.length}명, 접속 중인 학생은 ${connectedCount}명입니다.</p>
+        <div class="notice info">
+          이 게임은 패드로 진행하는 마피아 게임입니다. 자기 역할은 다른 친구에게 보여 주지 않습니다. 밤 행동과 투표는 패드로 하고, 실제 말하기는 낮 토론 시간에만 합니다.
+        </div>
+        <div class="notice warn">
+          친구를 비난하거나 몰아가는 말은 하지 않습니다. 말과 행동을 근거로 추리하고, 장난이 심해지면 게임을 중단할 수 있습니다.
+        </div>
+        <div class="notice info">탈락자는 이후 말하거나 투표하지 않고 관전합니다.</div>
+      </div>
+    </section>
+  `, () => {
+    document.querySelector("#backHomeBtn").addEventListener("click", renderHome);
+  }, force);
+}
+
+function renderMafiaUnassigned(force = false) {
+  setView("mafia-unassigned", `
+    <section class="screen mafia-mode">
+      <div class="panel mafia-panel">
+        <h2>이번 게임의 역할이 아직 배정되지 않았습니다.</h2>
+        <p class="lead">선생님이 게임을 초기화하거나 역할을 다시 배정할 때까지 기다려 주세요.</p>
+      </div>
+    </section>
+  `, null, force);
+}
+
+function renderMafiaRoleReveal(force = false) {
+  const player = getMafiaPlayer(state.studentId);
+  const sameMafia = getMafiaPlayers().filter((item) => item.role === "mafia" && item.id !== player.id);
+
+  setView("mafia-role-reveal", `
+    <section class="screen mafia-mode">
+      <div class="status-bar">
+        <span class="pill red">비밀 역할</span>
+        <span class="pill ${player.alive ? "green" : "red"}">${player.alive ? "생존" : "탈락"}</span>
+      </div>
+
+      <div class="panel mafia-panel role-reveal-card role-${escapeAttr(player.role)}">
+        <p class="eyebrow">다른 친구에게 보여 주지 마세요</p>
+        <h1>당신은 ${roleLabel(player.role)}입니다.</h1>
+        <p class="lead">${escapeHtml(roleDescription(player.role))}</p>
+        ${player.role === "mafia" ? `
+          <div class="notice warn">
+            <strong>같은 마피아</strong>
+            <p>${sameMafia.length ? sameMafia.map((item) => escapeHtml(item.name)).join(", ") : "혼자 남은 마피아입니다."}</p>
+          </div>
+        ` : ""}
+      </div>
+    </section>
+  `, null, force);
+}
+
+function renderMafiaNightAction(force = false) {
+  const player = getMafiaPlayer(state.studentId);
+  if (!player?.alive) {
+    renderMafiaSpectator("밤 행동", "당신은 탈락했습니다. 이제부터 관전만 가능합니다.", force);
+    return;
+  }
+
+  const round = getCurrentMafiaRound();
+  const action = getMafiaNightAction(player.id, player.role);
+  const options = getMafiaSelectablePlayers(player.id);
+  const disabled = Boolean(action);
+
+  if (isMafiaNightComplete() && !round.nightResult) {
+    calculateMafiaNightResult();
+  }
+
+  setView(`mafia-night-${getMafiaRoundNumber()}-${player.id}-${Boolean(action)}`, `
+    <section class="screen mafia-mode">
+      <div class="status-bar">
+        <span class="pill red">${getMafiaRoundNumber()}번째 밤 행동</span>
+        <span class="pill green">내 역할 ${roleLabel(player.role)}</span>
+      </div>
+
+      <div class="panel mafia-panel">
+        <h2>밤 행동 시간입니다.</h2>
+        <p class="lead">한 명을 선택하세요. 선택 후 변경할 수 없습니다.</p>
+        ${action ? `<div class="notice info">밤 행동을 완료했습니다. 모든 학생의 행동이 끝날 때까지 기다려 주세요.</div>` : ""}
+        ${player.role === "police" && action?.result ? `
+          <div class="notice ${action.result === "mafia" ? "danger" : "info"}">
+            조사 결과: ${escapeHtml(action.selectedName)}은/는 ${action.result === "mafia" ? "마피아입니다." : "마피아가 아닙니다."}
+          </div>
+        ` : ""}
+        ${player.role === "mafia" ? renderMafiaPartnerChoices(round) : ""}
+        ${renderStudentChoiceButtons(options, "mafia-night-target", disabled)}
+      </div>
+    </section>
+  `, () => {
+    document.querySelectorAll("[data-mafia-night-target]").forEach((button) => {
+      button.addEventListener("click", () => submitMafiaNightAction(button.dataset.mafiaNightTarget));
+    });
+  }, force);
+}
+
+function renderMafiaNightResult(force = false) {
+  const result = getCurrentMafiaRound().nightResult || {};
+  const message = result.savedByDoctor
+    ? "지난밤 마피아의 공격이 있었지만 아무도 탈락하지 않았습니다."
+    : result.eliminatedName
+      ? `지난밤 ${escapeHtml(result.eliminatedName)}이/가 탈락했습니다.`
+      : "지난밤 아무도 탈락하지 않았습니다.";
+
+  setView("mafia-night-result", `
+    <section class="screen mafia-mode">
+      <div class="panel mafia-panel result-panel">
+        <span class="pill gold">낮 결과 발표</span>
+        <h1>${message}</h1>
+        ${getMafiaWinner() ? `<div class="notice success">${mafiaWinnerText(getMafiaWinner())}</div>` : `<p class="lead">이제 낮 토론을 준비합니다.</p>`}
+      </div>
+    </section>
+  `, null, force);
+}
+
+function renderMafiaDiscussion(force = false) {
+  const player = getMafiaPlayer(state.studentId);
+  const isAlive = Boolean(player?.alive);
+
+  setView("mafia-discussion", `
+    <section class="screen mafia-mode">
+      <div class="panel mafia-panel">
+        <span class="pill blue">낮 토론</span>
+        <h2>${isAlive ? "낮 토론 시간입니다." : "관전 중입니다."}</h2>
+        <p class="lead">${isAlive ? "말과 행동을 바탕으로 마피아를 찾아보세요." : "탈락자는 말하거나 투표할 수 없습니다."}</p>
+        <div class="notice warn">친구를 몰아가거나 비난하지 말고, 근거를 들어 말해 주세요.</div>
+        <div class="timer-wrap">
+          <div class="timer-top">
+            <span>토론 남은 시간</span>
+            <span id="mafiaDiscussionTimerText">${getMafiaSettings().discussionSeconds}초</span>
+          </div>
+          <div class="timer-track"><div id="mafiaDiscussionTimerFill" class="timer-fill"></div></div>
+        </div>
+      </div>
+    </section>
+  `, () => {
+    startTimer({
+      startedAt: getMafiaState().discussionStartedAt,
+      limit: getMafiaSettings().discussionSeconds,
+      textSelector: "#mafiaDiscussionTimerText",
+      fillSelector: "#mafiaDiscussionTimerFill"
+    });
+  }, force);
+}
+
+function renderMafiaVoting(force = false) {
+  const player = getMafiaPlayer(state.studentId);
+  if (!player?.alive) {
+    renderMafiaSpectator("투표", "당신은 탈락했습니다. 관전만 가능합니다.", force);
+    return;
+  }
+
+  const vote = getMafiaVote(player.id);
+  const options = getMafiaSelectablePlayers(player.id);
+
+  setView(`mafia-voting-${getMafiaRoundNumber()}-${Boolean(vote)}`, `
+    <section class="screen mafia-mode">
+      <div class="panel mafia-panel">
+        <span class="pill blue">비밀 투표</span>
+        <h2>최종 지목할 친구를 선택하세요.</h2>
+        <p class="lead">생존자 중 한 명에게 투표합니다. 자기 자신에게는 투표할 수 없습니다.</p>
+        ${vote ? `<div class="notice info">투표를 완료했습니다. 모두의 투표가 끝날 때까지 기다려 주세요.</div>` : ""}
+        ${renderStudentChoiceButtons(options, "mafia-vote-target", Boolean(vote))}
+      </div>
+    </section>
+  `, () => {
+    document.querySelectorAll("[data-mafia-vote-target]").forEach((button) => {
+      button.addEventListener("click", () => submitMafiaVote(button.dataset.mafiaVoteTarget));
+    });
+  }, force);
+}
+
+function renderMafiaVoteResult(force = false) {
+  const result = getCurrentMafiaRound().voteResult || {};
+  const title = result.revotedTieSkipped
+    ? "재투표도 동점이라 아무도 탈락하지 않았습니다."
+    : result.revotedTieRequired
+      ? "동점입니다. 재투표가 필요합니다."
+      : result.eliminatedName
+        ? `이번 투표에서 ${escapeHtml(result.eliminatedName)}이/가 최종 지목되었습니다.`
+        : "이번 투표에서는 아무도 탈락하지 않았습니다.";
+
+  setView("mafia-vote-result", `
+    <section class="screen mafia-mode">
+      <div class="panel mafia-panel result-panel">
+        <span class="pill gold">투표 결과</span>
+        <h1>${title}</h1>
+        ${result.topVotedName ? `<p class="lead">가장 많은 표를 받은 사람: ${escapeHtml(result.topVotedName)}</p>` : ""}
+        ${getMafiaWinner() ? `<div class="notice success">${mafiaWinnerText(getMafiaWinner())}</div>` : ""}
+      </div>
+    </section>
+  `, null, force);
+}
+
+function renderMafiaRoleRevealDead(force = false) {
+  const elimination = getLastMafiaElimination();
+  const roleText = elimination?.role ? roleLabel(elimination.role) : "알 수 없음";
+
+  setView("mafia-role-dead", `
+    <section class="screen mafia-mode">
+      <div class="panel mafia-panel result-panel">
+        <span class="pill red">정체 공개</span>
+        <h1>${elimination?.name ? `${escapeHtml(elimination.name)}의 정체는 ${roleText}였습니다.` : "공개할 정체가 없습니다."}</h1>
+        ${getMafiaWinner() ? `<div class="notice success">${mafiaWinnerText(getMafiaWinner())}</div>` : `<p class="lead">승리 조건이 충족되지 않았다면 다음 밤으로 진행합니다.</p>`}
+      </div>
+    </section>
+  `, null, force);
+}
+
+function renderMafiaSpectator(label, message, force = false) {
+  setView(`mafia-spectator-${label}`, `
+    <section class="screen mafia-mode">
+      <div class="panel mafia-panel">
+        <span class="pill red">관전</span>
+        <h2>${escapeHtml(message)}</h2>
+        <p class="lead">탈락자는 이후 말하거나 투표하지 않고 관전합니다.</p>
+      </div>
+    </section>
+  `, null, force);
+}
+
 function renderStudentQuiz(force = false) {
   const questions = getQuestions();
   const currentIndex = Number(state.room.currentQuestionIndex || 0);
@@ -830,6 +1141,11 @@ function renderTeacherDashboard(force = true) {
 
   if (getRoomMode() === "compliment") {
     renderComplimentTeacherDashboard(force);
+    return;
+  }
+
+  if (getRoomMode() === "mafia") {
+    renderMafiaTeacherDashboard(force);
     return;
   }
 
@@ -1055,6 +1371,155 @@ function renderComplimentTeacherDashboard(force = true) {
   }, force);
 }
 
+function renderMafiaTeacherDashboard(force = true) {
+  const students = getStudents();
+  const connectedCount = students.filter((student) => student.connected).length;
+  const players = getMafiaPlayers();
+  const alivePlayers = players.filter((player) => player.alive);
+  const status = state.room.status || "waiting";
+  const mafia = getMafiaState();
+  const settings = getMafiaSettings();
+  const round = getCurrentMafiaRound();
+  const winner = getMafiaWinner();
+  const canSwitch = status === "waiting";
+  const canStartVote = status === "discussion" || (status === "voteResult" && Boolean(round.voteResult?.revotedTieRequired));
+  const canStartNextNight = status === "roleRevealDead" || (status === "voteResult" && !round.voteResult?.eliminatedStudentId && !round.voteResult?.revotedTieRequired);
+
+  setView("teacher-mafia-dashboard", `
+    <section class="screen mafia-mode">
+      <div class="status-bar">
+        <div>
+          <p class="eyebrow">교사 화면</p>
+          <h1>교실 마피아 게임</h1>
+        </div>
+        <button class="btn ghost" id="backHomeBtn" type="button">처음으로</button>
+      </div>
+
+      <div class="panel mafia-panel">
+        <div class="status-bar">
+          <div>
+            <p class="muted small">학생들에게 알려 줄 방 코드</p>
+            <div class="room-code">${escapeHtml(state.roomCode)}</div>
+          </div>
+          <div class="button-row">
+            <span class="pill ${statusPillClass(status)}">${statusLabel(status)}</span>
+            <span class="pill red">${mafia.round || 1}라운드</span>
+            <button class="btn ghost" id="copyRoomCodeBtn" type="button">방 코드 복사</button>
+          </div>
+        </div>
+
+        <div class="stats">
+          <div class="stat">
+            <span class="muted">전체 학생</span>
+            <span class="num">${students.length}</span>
+          </div>
+          <div class="stat">
+            <span class="muted">접속 학생</span>
+            <span class="num">${connectedCount}</span>
+          </div>
+          <div class="stat">
+            <span class="muted">생존자</span>
+            <span class="num">${alivePlayers.length || students.length}</span>
+          </div>
+        </div>
+      </div>
+
+      <div class="teacher-grid">
+        <aside class="panel">
+          ${renderTeacherModeControls()}
+
+          <section class="panel tight">
+            <h2>역할 설정</h2>
+            <div class="form-grid">
+              <div class="field">
+                <label for="mafiaCountInput">마피아 수</label>
+                <input id="mafiaCountInput" type="number" min="1" max="10" value="${settings.mafiaCount}" ${canSwitch ? "" : "disabled"} />
+              </div>
+              <div class="field">
+                <label for="policeCountInput">경찰 수</label>
+                <input id="policeCountInput" type="number" min="0" max="5" value="${settings.policeCount}" ${canSwitch ? "" : "disabled"} />
+              </div>
+              <div class="field">
+                <label for="doctorCountInput">의사 수</label>
+                <input id="doctorCountInput" type="number" min="0" max="5" value="${settings.doctorCount}" ${canSwitch ? "" : "disabled"} />
+              </div>
+              <div class="field">
+                <label for="discussionSecondsInput">토론 시간(초)</label>
+                <input id="discussionSecondsInput" type="number" min="30" max="900" step="30" value="${settings.discussionSeconds}" />
+              </div>
+            </div>
+            <button class="btn primary" data-action="mafia-save-settings" type="button">설정 저장</button>
+            <p class="muted small">시민은 전체 학생에서 마피아, 경찰, 의사를 뺀 나머지로 자동 배정됩니다.</p>
+          </section>
+
+          <h2>진행 controls</h2>
+          <div class="button-row">
+            <button class="btn primary" data-action="mafia-assign" type="button" ${students.length && status === "waiting" ? "" : "disabled"}>역할 배정</button>
+            <button class="btn dark" data-action="mafia-role-reveal" type="button" ${players.length && (status === "roleAssigned" || status === "waiting") ? "" : "disabled"}>역할 확인 시작</button>
+            <button class="btn primary" data-action="mafia-start-night" type="button" ${players.length && !winner && ["roleAssigned", "roleReveal"].includes(status) ? "" : "disabled"}>밤 행동 시작</button>
+            <button class="btn warn" data-action="mafia-calc-night" type="button" ${players.length && status === "nightAction" ? "" : "disabled"}>밤 결과 계산</button>
+            <button class="btn success" data-action="mafia-publish-night" type="button" ${players.length && status === "nightAction" ? "" : "disabled"}>낮 결과 발표</button>
+            <button class="btn primary" data-action="mafia-start-discussion" type="button" ${status === "nightResult" && !winner ? "" : "disabled"}>토론 시작</button>
+            <button class="btn primary" data-action="mafia-start-voting" type="button" ${canStartVote && !winner ? "" : "disabled"}>투표 시작</button>
+            <button class="btn warn" data-action="mafia-reveal-vote" type="button" ${status === "voting" ? "" : "disabled"}>투표 결과 공개</button>
+            <button class="btn dark" data-action="mafia-reveal-role" type="button" ${status === "voteResult" ? "" : "disabled"}>정체 공개</button>
+            <button class="btn success" data-action="mafia-next-night" type="button" ${canStartNextNight && !winner ? "" : "disabled"}>다음 밤</button>
+            <button class="btn ghost" data-action="mafia-finish" type="button" ${winner ? "" : "disabled"}>게임 종료</button>
+            <button class="btn danger" data-action="reset" type="button">게임 초기화</button>
+            <button class="btn danger" data-action="clear-room" type="button">학생/자료 목록 초기화</button>
+          </div>
+
+          <section class="panel tight">
+            <h3>참여 학생</h3>
+            ${renderStudentList(students)}
+          </section>
+        </aside>
+
+        <div class="screen">
+          <section class="panel mafia-panel">
+            <h2>현재 상태</h2>
+            ${winner ? `<div class="notice success">${mafiaWinnerText(winner)}</div>` : renderMafiaWinCheck()}
+            ${renderMafiaCompletionPanel()}
+          </section>
+
+          <section class="panel">
+            <h2>역할표</h2>
+            ${renderMafiaRoleTable(players)}
+          </section>
+
+          <div class="grid-2">
+            <section class="panel">
+              <h3>밤 행동 기록</h3>
+              ${renderMafiaNightTeacherPanel(round)}
+            </section>
+            <section class="panel">
+              <h3>투표 현황</h3>
+              ${renderMafiaVoteTeacherPanel(round)}
+            </section>
+          </div>
+        </div>
+      </div>
+    </section>
+  `, () => {
+    document.querySelector("#backHomeBtn").addEventListener("click", renderHome);
+    document.querySelector("#copyRoomCodeBtn").addEventListener("click", copyRoomCode);
+    document.querySelectorAll("[data-switch-mode]").forEach((button) => {
+      button.addEventListener("click", () => switchRoomMode(button.dataset.switchMode));
+    });
+    document.querySelectorAll("[data-action]").forEach((button) => {
+      button.addEventListener("click", () => handleTeacherAction(button.dataset.action));
+    });
+    if (status === "discussion") {
+      startTimer({
+        startedAt: mafia.discussionStartedAt,
+        limit: settings.discussionSeconds,
+        textSelector: "#teacherMafiaDiscussionText",
+        fillSelector: "#teacherMafiaDiscussionFill"
+      });
+    }
+  }, force);
+}
+
 function renderFinalResult(viewName, showTeacherControls, force = false) {
   const ranking = getCumulativeRanking();
   const [first, second, third] = ranking;
@@ -1185,7 +1650,8 @@ async function enterTeacher() {
         students: {},
         questions: {},
         compliments: {},
-        answers: {}
+        answers: {},
+        mafia: getDefaultMafiaState()
       });
     } else {
       const room = snapshot.val();
@@ -1198,6 +1664,7 @@ async function enterTeacher() {
           currentClueIndex: 0,
           questionOrder: null,
           complimentOrder: null,
+          mafia: getDefaultMafiaState(),
           answers: null,
           complimentAnswers: null,
           complimentBonuses: null
@@ -1387,6 +1854,101 @@ async function submitCompliment(event) {
   } catch (error) {
     console.error(error);
     showToast("칭찬 카드를 저장하지 못했습니다. 잠시 후 다시 시도해 주세요.", "error");
+  }
+}
+
+async function submitMafiaNightAction(selectedStudentId) {
+  if (state.room.status !== "nightAction") {
+    showToast("지금은 밤 행동 시간이 아닙니다.", "error");
+    return;
+  }
+
+  const player = getMafiaPlayer(state.studentId);
+  const target = getMafiaPlayer(selectedStudentId);
+
+  if (!player?.alive) {
+    showToast("탈락자는 밤 행동에 참여할 수 없습니다.", "error");
+    return;
+  }
+
+  if (!target?.alive) {
+    showToast("생존자 중에서 선택해 주세요.", "error");
+    return;
+  }
+
+  if (!getMafiaSettings().selfSelectAllowed && selectedStudentId === state.studentId) {
+    showToast("자기 자신은 선택할 수 없습니다.", "error");
+    return;
+  }
+
+  if (getMafiaNightAction(player.id, player.role)) {
+    showToast("밤 행동은 한 번만 선택할 수 있습니다.", "error");
+    return;
+  }
+
+  const action = {
+    selectedStudentId,
+    selectedName: target.name,
+    submittedAt: serverTimestamp()
+  };
+
+  if (player.role === "police") {
+    action.result = target.role === "mafia" ? "mafia" : "not_mafia";
+  }
+
+  try {
+    await set(ref(db, `rooms/${state.roomCode}/mafia/rounds/${getMafiaRoundNumber()}/nightActions/${player.role}/${player.id}`), action);
+    showToast("밤 행동을 제출했습니다.", "success");
+    if (isMafiaNightComplete()) {
+      await calculateMafiaNightResult();
+    }
+    renderMafiaNightAction(true);
+  } catch (error) {
+    console.error(error);
+    showToast("밤 행동을 저장하지 못했습니다.", "error");
+  }
+}
+
+async function submitMafiaVote(selectedStudentId) {
+  if (state.room.status !== "voting") {
+    showToast("지금은 투표 시간이 아닙니다.", "error");
+    return;
+  }
+
+  const player = getMafiaPlayer(state.studentId);
+  const target = getMafiaPlayer(selectedStudentId);
+
+  if (!player?.alive) {
+    showToast("탈락자는 투표할 수 없습니다.", "error");
+    return;
+  }
+
+  if (!target?.alive) {
+    showToast("생존자 중에서 투표해 주세요.", "error");
+    return;
+  }
+
+  if (selectedStudentId === state.studentId) {
+    showToast("자기 자신에게는 투표할 수 없습니다.", "error");
+    return;
+  }
+
+  if (getMafiaVote(player.id)) {
+    showToast("투표는 한 번만 할 수 있습니다.", "error");
+    return;
+  }
+
+  try {
+    await set(ref(db, `rooms/${state.roomCode}/mafia/rounds/${getMafiaRoundNumber()}/votes/${player.id}`), {
+      selectedStudentId,
+      selectedName: target.name,
+      submittedAt: serverTimestamp()
+    });
+    showToast("투표를 제출했습니다.", "success");
+    renderMafiaVoting(true);
+  } catch (error) {
+    console.error(error);
+    showToast("투표를 저장하지 못했습니다.", "error");
   }
 }
 
@@ -1596,7 +2158,19 @@ function handleTeacherAction(action) {
     "compliment-reveal-target": revealComplimentTarget,
     "compliment-author-guess": startComplimentAuthorGuess,
     "compliment-reveal-author": revealComplimentAuthor,
-    "compliment-next-card": nextComplimentCard
+    "compliment-next-card": nextComplimentCard,
+    "mafia-save-settings": saveMafiaSettings,
+    "mafia-assign": assignMafiaRoles,
+    "mafia-role-reveal": startMafiaRoleReveal,
+    "mafia-start-night": startMafiaNight,
+    "mafia-calc-night": () => calculateMafiaNightResult({ showToastOnComplete: true }),
+    "mafia-publish-night": publishMafiaNightResult,
+    "mafia-start-discussion": startMafiaDiscussion,
+    "mafia-start-voting": startMafiaVoting,
+    "mafia-reveal-vote": revealMafiaVoteResult,
+    "mafia-reveal-role": revealMafiaEliminatedRole,
+    "mafia-next-night": startNextMafiaNight,
+    "mafia-finish": finishMafiaGame
   };
   actions[action]?.();
 }
@@ -1763,6 +2337,319 @@ async function nextComplimentCard() {
   }
 }
 
+async function saveMafiaSettings() {
+  const settings = readMafiaSettingsFromForm();
+  const totalSpecialRoles = settings.mafiaCount + settings.policeCount + settings.doctorCount;
+  const studentCount = getStudents().length;
+
+  if (studentCount && totalSpecialRoles > studentCount) {
+    showToast("역할 수가 현재 학생 수보다 많습니다.", "error");
+    return;
+  }
+
+  try {
+    await update(roomRef(state.roomCode), {
+      "mafia/settings": settings
+    });
+    showToast("마피아 게임 설정을 저장했습니다.", "success");
+  } catch (error) {
+    console.error(error);
+    showToast("설정을 저장하지 못했습니다.", "error");
+  }
+}
+
+async function assignMafiaRoles() {
+  if ((state.room?.status || "waiting") !== "waiting") {
+    showToast("역할 배정은 대기 상태에서만 할 수 있습니다.", "error");
+    return;
+  }
+
+  const students = getStudents();
+  const settings = readMafiaSettingsFromForm();
+  const totalSpecialRoles = settings.mafiaCount + settings.policeCount + settings.doctorCount;
+
+  if (!students.length) {
+    showToast("학생이 입장한 뒤 역할을 배정해 주세요.", "error");
+    return;
+  }
+
+  if (totalSpecialRoles > students.length) {
+    showToast("역할 수가 학생 수보다 많습니다. 역할 인원을 줄여 주세요.", "error");
+    return;
+  }
+
+  if (settings.mafiaCount >= students.length - settings.mafiaCount) {
+    showToast("마피아 수는 시민팀 수보다 적어야 합니다. 마피아 수를 줄여 주세요.", "error");
+    return;
+  }
+
+  const roleDeck = [
+    ...Array(settings.mafiaCount).fill("mafia"),
+    ...Array(settings.policeCount).fill("police"),
+    ...Array(settings.doctorCount).fill("doctor"),
+    ...Array(Math.max(0, students.length - totalSpecialRoles)).fill("citizen")
+  ];
+  const shuffledRoles = shuffleArray(roleDeck);
+  const assigned = {};
+
+  students.forEach((student, index) => {
+    const role = shuffledRoles[index] || "citizen";
+    assigned[student.id] = {
+      name: student.name,
+      role,
+      team: role === "mafia" ? "mafia" : "citizen",
+      alive: true,
+      connected: student.connected
+    };
+  });
+
+  try {
+    await update(roomRef(state.roomCode), {
+      status: "roleAssigned",
+      mafia: {
+        round: 1,
+        settings,
+        students: assigned,
+        rounds: null,
+        winner: null,
+        lastElimination: null,
+        discussionStartedAt: null,
+        assignedAt: Date.now()
+      }
+    });
+    showToast("역할을 랜덤 배정했습니다.", "success");
+  } catch (error) {
+    console.error(error);
+    showToast("역할을 배정하지 못했습니다.", "error");
+  }
+}
+
+async function startMafiaRoleReveal() {
+  if (!getMafiaPlayers().length) {
+    showToast("먼저 역할을 배정해 주세요.", "error");
+    return;
+  }
+
+  try {
+    await update(roomRef(state.roomCode), { status: "roleReveal" });
+    showToast("학생 역할 확인 화면을 열었습니다.", "success");
+  } catch (error) {
+    console.error(error);
+    showToast("역할 확인을 시작하지 못했습니다.", "error");
+  }
+}
+
+async function startMafiaNight() {
+  if (!getMafiaPlayers().length) {
+    showToast("먼저 역할을 배정해 주세요.", "error");
+    return;
+  }
+
+  const roundNumber = Math.max(1, getMafiaRoundNumber());
+  try {
+    await update(roomRef(state.roomCode), {
+      status: "nightAction",
+      "mafia/round": roundNumber,
+      "mafia/discussionStartedAt": null,
+      [`mafia/rounds/${roundNumber}/nightActions`]: null,
+      [`mafia/rounds/${roundNumber}/nightResult`]: null,
+      [`mafia/rounds/${roundNumber}/votes`]: null,
+      [`mafia/rounds/${roundNumber}/voteResult`]: null,
+      [`mafia/rounds/${roundNumber}/voteAttempt`]: 0
+    });
+    showToast("밤 행동을 시작했습니다.", "success");
+  } catch (error) {
+    console.error(error);
+    showToast("밤 행동을 시작하지 못했습니다.", "error");
+  }
+}
+
+async function calculateMafiaNightResult({ showToastOnComplete = false } = {}) {
+  const resultPath = ref(db, `rooms/${state.roomCode}/mafia/rounds/${getMafiaRoundNumber()}/nightResult`);
+  const existing = await get(resultPath);
+  if (existing.exists()) {
+    if (showToastOnComplete) {
+      showToast("이미 밤 결과가 계산되어 있습니다.", "success");
+    }
+    return existing.val();
+  }
+
+  const resultData = buildMafiaNightResult();
+  try {
+    const result = await runTransaction(resultPath, (current) => current || resultData);
+    if (showToastOnComplete) {
+      showToast("밤 결과를 계산했습니다.", "success");
+    }
+    return result.snapshot.val();
+  } catch (error) {
+    console.error(error);
+    showToast("밤 결과를 계산하지 못했습니다.", "error");
+    return null;
+  }
+}
+
+async function publishMafiaNightResult() {
+  const nightResult = await calculateMafiaNightResult();
+  if (!nightResult) {
+    return;
+  }
+
+  const updates = {
+    status: "nightResult"
+  };
+
+  if (nightResult.eliminatedStudentId) {
+    const eliminated = getMafiaPlayer(nightResult.eliminatedStudentId);
+    updates[`mafia/students/${nightResult.eliminatedStudentId}/alive`] = false;
+    updates["mafia/lastElimination"] = {
+      studentId: nightResult.eliminatedStudentId,
+      name: nightResult.eliminatedName,
+      role: eliminated?.role || "",
+      source: "night",
+      round: getMafiaRoundNumber()
+    };
+  } else {
+    updates["mafia/lastElimination"] = null;
+  }
+
+  const projectedPlayers = projectMafiaPlayersAfterElimination(nightResult.eliminatedStudentId);
+  const winner = getMafiaWinnerForPlayers(projectedPlayers);
+  if (winner) {
+    updates["mafia/winner"] = winner;
+  }
+
+  try {
+    await update(roomRef(state.roomCode), updates);
+    showToast("낮 결과를 발표했습니다.", "success");
+  } catch (error) {
+    console.error(error);
+    showToast("낮 결과를 발표하지 못했습니다.", "error");
+  }
+}
+
+async function startMafiaDiscussion() {
+  try {
+    await update(roomRef(state.roomCode), {
+      status: "discussion",
+      "mafia/discussionStartedAt": serverTimestamp()
+    });
+    showToast("토론을 시작했습니다.", "success");
+  } catch (error) {
+    console.error(error);
+    showToast("토론을 시작하지 못했습니다.", "error");
+  }
+}
+
+async function startMafiaVoting() {
+  const round = getCurrentMafiaRound();
+  const previousVoteResult = round.voteResult || {};
+  const nextAttempt = previousVoteResult.revotedTieRequired ? 2 : 1;
+
+  try {
+    await update(roomRef(state.roomCode), {
+      status: "voting",
+      [`mafia/rounds/${getMafiaRoundNumber()}/votes`]: null,
+      [`mafia/rounds/${getMafiaRoundNumber()}/voteResult`]: null,
+      [`mafia/rounds/${getMafiaRoundNumber()}/voteAttempt`]: nextAttempt
+    });
+    showToast(nextAttempt === 2 ? "재투표를 시작했습니다." : "투표를 시작했습니다.", "success");
+  } catch (error) {
+    console.error(error);
+    showToast("투표를 시작하지 못했습니다.", "error");
+  }
+}
+
+async function revealMafiaVoteResult() {
+  const resultData = buildMafiaVoteResult();
+  const updates = {
+    status: "voteResult",
+    [`mafia/rounds/${getMafiaRoundNumber()}/voteResult`]: resultData
+  };
+
+  if (resultData.eliminatedStudentId) {
+    const eliminated = getMafiaPlayer(resultData.eliminatedStudentId);
+    updates[`mafia/students/${resultData.eliminatedStudentId}/alive`] = false;
+    updates["mafia/lastElimination"] = {
+      studentId: resultData.eliminatedStudentId,
+      name: resultData.eliminatedName,
+      role: eliminated?.role || "",
+      source: "vote",
+      round: getMafiaRoundNumber()
+    };
+  }
+
+  const projectedPlayers = projectMafiaPlayersAfterElimination(resultData.eliminatedStudentId);
+  const winner = getMafiaWinnerForPlayers(projectedPlayers);
+  if (winner) {
+    updates["mafia/winner"] = winner;
+  }
+
+  try {
+    await update(roomRef(state.roomCode), updates);
+    showToast("투표 결과를 공개했습니다.", "success");
+  } catch (error) {
+    console.error(error);
+    showToast("투표 결과를 공개하지 못했습니다.", "error");
+  }
+}
+
+async function revealMafiaEliminatedRole() {
+  const voteResult = getCurrentMafiaRound().voteResult || {};
+  if (voteResult.revotedTieRequired) {
+    showToast("동점 재투표를 먼저 진행해 주세요.", "error");
+    return;
+  }
+
+  try {
+    await update(roomRef(state.roomCode), {
+      status: "roleRevealDead"
+    });
+    showToast("정체 공개 화면으로 이동했습니다.", "success");
+  } catch (error) {
+    console.error(error);
+    showToast("정체 공개를 진행하지 못했습니다.", "error");
+  }
+}
+
+async function startNextMafiaNight() {
+  if (getMafiaWinner()) {
+    finishMafiaGame();
+    return;
+  }
+
+  const nextRound = getMafiaRoundNumber() + 1;
+  try {
+    await update(roomRef(state.roomCode), {
+      status: "nightAction",
+      "mafia/round": nextRound,
+      "mafia/lastElimination": null,
+      "mafia/discussionStartedAt": null,
+      [`mafia/rounds/${nextRound}/nightActions`]: null,
+      [`mafia/rounds/${nextRound}/nightResult`]: null,
+      [`mafia/rounds/${nextRound}/votes`]: null,
+      [`mafia/rounds/${nextRound}/voteResult`]: null,
+      [`mafia/rounds/${nextRound}/voteAttempt`]: 0
+    });
+    showToast("다음 밤을 시작했습니다.", "success");
+  } catch (error) {
+    console.error(error);
+    showToast("다음 밤으로 이동하지 못했습니다.", "error");
+  }
+}
+
+async function finishMafiaGame() {
+  try {
+    await update(roomRef(state.roomCode), {
+      status: "finished",
+      finishedAt: serverTimestamp()
+    });
+    renderMafiaFinalResult("teacher-mafia-final", true, true);
+  } catch (error) {
+    console.error(error);
+    showToast("마피아 게임을 종료하지 못했습니다.", "error");
+  }
+}
+
 async function restartCurrentQuestion() {
   const questions = getQuestions();
   if (!questions.length) {
@@ -1858,6 +2745,7 @@ async function resetGame() {
     complimentOrder: null,
     complimentBonuses: null,
     complimentAnswers: null,
+    mafia: getDefaultMafiaState(),
     answers: null
   };
 
@@ -1900,6 +2788,7 @@ async function clearRoomLists() {
       students: null,
       questions: null,
       compliments: null,
+      mafia: getDefaultMafiaState(),
       answers: null,
       complimentAnswers: null
     });
@@ -1974,7 +2863,11 @@ function subscribeToRoom(code) {
     state.room = snapshot.val();
     if (state.role === "teacher") {
       if (state.room?.status === "finished") {
-        renderFinalResult("teacher-final", true, true);
+        if (getRoomMode() === "mafia") {
+          renderMafiaFinalResult("teacher-mafia-final", true, true);
+        } else {
+          renderFinalResult("teacher-final", true, true);
+        }
       } else {
         renderTeacherDashboard(true);
       }
@@ -2007,7 +2900,7 @@ function getSelectedTeacherMode() {
 }
 
 async function switchRoomMode(nextMode) {
-  if (!["quiz", "compliment"].includes(nextMode)) {
+  if (!["quiz", "compliment", "mafia"].includes(nextMode)) {
     return;
   }
 
@@ -2028,11 +2921,12 @@ async function switchRoomMode(nextMode) {
       currentClueIndex: 0,
       questionOrder: null,
       complimentOrder: null,
+      mafia: getDefaultMafiaState(),
       answers: null,
       complimentAnswers: null,
       complimentBonuses: null
     });
-    showToast(nextMode === "quiz" ? "자기소개 퀴즈 배틀 모드로 바꿨습니다." : "칭찬 스무고개 모드로 바꿨습니다.", "success");
+    showToast(`${modeLabel(nextMode)} 모드로 바꿨습니다.`, "success");
   } catch (error) {
     console.error(error);
     showToast("게임 모드를 바꾸지 못했습니다.", "error");
@@ -2355,9 +3249,481 @@ function getAnswerCounts(question) {
   return counts;
 }
 
+function getDefaultMafiaState() {
+  return {
+    round: 1,
+    settings: getDefaultMafiaSettings(),
+    students: {},
+    rounds: {},
+    winner: null,
+    lastElimination: null,
+    discussionStartedAt: null
+  };
+}
+
+function getDefaultMafiaSettings() {
+  return {
+    mafiaCount: DEFAULT_MAFIA_COUNT,
+    policeCount: DEFAULT_POLICE_COUNT,
+    doctorCount: DEFAULT_DOCTOR_COUNT,
+    discussionSeconds: DEFAULT_DISCUSSION_SECONDS,
+    revealRoleOnElimination: REVEAL_ROLE_ON_ELIMINATION,
+    voteTieRule: VOTE_TIE_RULE,
+    selfSelectAllowed: MAFIA_SELF_SELECT_ALLOWED
+  };
+}
+
+function getMafiaState() {
+  return {
+    ...getDefaultMafiaState(),
+    ...(state.room?.mafia || {}),
+    settings: getMafiaSettings()
+  };
+}
+
+function getMafiaSettings() {
+  return {
+    ...getDefaultMafiaSettings(),
+    ...(state.room?.mafia?.settings || {})
+  };
+}
+
+function readMafiaSettingsFromForm() {
+  const current = getMafiaSettings();
+  return {
+    mafiaCount: clampInt(document.querySelector("#mafiaCountInput")?.value, 1, 10, current.mafiaCount),
+    policeCount: clampInt(document.querySelector("#policeCountInput")?.value, 0, 5, current.policeCount),
+    doctorCount: clampInt(document.querySelector("#doctorCountInput")?.value, 0, 5, current.doctorCount),
+    discussionSeconds: clampInt(document.querySelector("#discussionSecondsInput")?.value, 30, 900, current.discussionSeconds),
+    revealRoleOnElimination: REVEAL_ROLE_ON_ELIMINATION,
+    voteTieRule: VOTE_TIE_RULE,
+    selfSelectAllowed: MAFIA_SELF_SELECT_ALLOWED
+  };
+}
+
+function getMafiaPlayers() {
+  const raw = state.room?.mafia?.students || {};
+  const roomStudents = state.room?.students || {};
+  return Object.entries(raw)
+    .map(([id, value]) => ({
+      id,
+      name: value.name || roomStudents[id]?.name || "이름 없음",
+      role: value.role || "citizen",
+      team: value.team || (value.role === "mafia" ? "mafia" : "citizen"),
+      alive: value.alive !== false,
+      connected: Boolean(roomStudents[id]?.connected),
+      joinedAt: roomStudents[id]?.joinedAt || 0
+    }))
+    .sort((a, b) => String(a.name).localeCompare(String(b.name), "ko"));
+}
+
+function getMafiaPlayer(studentId) {
+  return getMafiaPlayers().find((player) => player.id === studentId) || null;
+}
+
+function getMafiaRoundNumber() {
+  return Math.max(1, Number(state.room?.mafia?.round || 1));
+}
+
+function getCurrentMafiaRound() {
+  return state.room?.mafia?.rounds?.[getMafiaRoundNumber()] || {};
+}
+
+function getMafiaNightAction(studentId, role) {
+  return getCurrentMafiaRound().nightActions?.[role]?.[studentId] || null;
+}
+
+function getMafiaVote(studentId) {
+  return getCurrentMafiaRound().votes?.[studentId] || null;
+}
+
+function getMafiaSelectablePlayers(selfId) {
+  const settings = getMafiaSettings();
+  return getMafiaPlayers().filter((player) => {
+    return player.alive && (settings.selfSelectAllowed || player.id !== selfId);
+  });
+}
+
+function isMafiaNightComplete() {
+  const alivePlayers = getMafiaPlayers().filter((player) => player.alive);
+  return alivePlayers.length > 0 && alivePlayers.every((player) => {
+    return Boolean(getMafiaNightAction(player.id, player.role));
+  });
+}
+
+function buildMafiaNightResult() {
+  const players = getMafiaPlayers();
+  const alivePlayers = players.filter((player) => player.alive);
+  const round = getCurrentMafiaRound();
+  const mafiaActions = Object.entries(round.nightActions?.mafia || {})
+    .map(([studentId, action]) => ({ studentId, ...action }))
+    .filter((action) => action.selectedStudentId);
+  const doctorActions = Object.values(round.nightActions?.doctor || {})
+    .filter((action) => action.selectedStudentId);
+  const policeActions = Object.values(round.nightActions?.police || {})
+    .filter((action) => action.selectedStudentId);
+  const citizenActions = Object.values(round.nightActions?.citizen || {})
+    .filter((action) => action.selectedStudentId);
+
+  const attackCounts = countSelections(mafiaActions);
+  const attackCandidates = getTopSelectionCandidates(attackCounts);
+  const attackTargetId = attackCandidates.length
+    ? attackCandidates[Math.floor(Math.random() * attackCandidates.length)]
+    : "";
+  const attackTarget = players.find((player) => player.id === attackTargetId);
+  const protectedIds = new Set(doctorActions.map((action) => action.selectedStudentId));
+  const protectedNames = doctorActions.map((action) => action.selectedName).filter(Boolean);
+  const savedByDoctor = Boolean(attackTargetId && protectedIds.has(attackTargetId));
+  const eliminated = attackTargetId && !savedByDoctor ? attackTarget : null;
+
+  return {
+    mafiaAttackTargetStudentId: attackTargetId || "",
+    mafiaAttackTargetName: attackTarget?.name || "",
+    mafiaAttackResolvedBy: attackCandidates.length > 1 ? "random" : attackCandidates.length === 1 ? "majority" : "none",
+    mafiaAttackCandidateStudentIds: attackCandidates,
+    mafiaAttackCandidates: attackCandidates.map((id) => getMafiaPlayer(id)?.name || "이름 없음"),
+    doctorProtectedStudentIds: [...protectedIds],
+    doctorProtectedNames: protectedNames,
+    doctorProtectedStudentId: doctorActions[0]?.selectedStudentId || "",
+    doctorProtectedName: doctorActions[0]?.selectedName || "",
+    eliminatedStudentId: eliminated?.id || "",
+    eliminatedName: eliminated?.name || "",
+    savedByDoctor,
+    policeActionCount: policeActions.length,
+    citizenActionCount: citizenActions.length,
+    aliveCountAtNight: alivePlayers.length,
+    calculatedAt: Date.now()
+  };
+}
+
+function buildMafiaVoteResult() {
+  const round = getCurrentMafiaRound();
+  const votes = Object.values(round.votes || {}).filter((vote) => vote.selectedStudentId);
+  const counts = countSelections(votes);
+  const topCandidates = getTopSelectionCandidates(counts);
+  const attempt = Number(round.voteAttempt || 1);
+  const tied = topCandidates.length > 1;
+  const shouldRevote = tied && getMafiaSettings().voteTieRule === "revote_then_skip" && attempt < 2;
+  const skippedByTie = tied && !shouldRevote;
+  const eliminatedId = !tied && topCandidates[0] ? topCandidates[0] : "";
+  const topName = topCandidates[0] ? getMafiaPlayer(topCandidates[0])?.name || "이름 없음" : "";
+
+  return {
+    topVotedStudentId: topCandidates[0] || "",
+    topVotedName: topName,
+    tiedStudentIds: tied ? topCandidates : [],
+    tiedNames: tied ? topCandidates.map((id) => getMafiaPlayer(id)?.name || "이름 없음") : [],
+    voteCounts: counts,
+    voteAttempt: attempt,
+    revotedTieRequired: shouldRevote,
+    revotedTieSkipped: skippedByTie,
+    eliminatedStudentId: eliminatedId,
+    eliminatedName: eliminatedId ? getMafiaPlayer(eliminatedId)?.name || "" : "",
+    calculatedAt: Date.now()
+  };
+}
+
+function countSelections(actions) {
+  return actions.reduce((counts, action) => {
+    const id = action.selectedStudentId;
+    if (id) {
+      counts[id] = Number(counts[id] || 0) + 1;
+    }
+    return counts;
+  }, {});
+}
+
+function getTopSelectionCandidates(counts) {
+  const entries = Object.entries(counts);
+  if (!entries.length) {
+    return [];
+  }
+  const max = Math.max(...entries.map(([, count]) => Number(count)));
+  return entries
+    .filter(([, count]) => Number(count) === max)
+    .map(([id]) => id);
+}
+
+function projectMafiaPlayersAfterElimination(eliminatedStudentId) {
+  return getMafiaPlayers().map((player) => ({
+    ...player,
+    alive: eliminatedStudentId === player.id ? false : player.alive
+  }));
+}
+
+function getMafiaWinnerForPlayers(players) {
+  const alivePlayers = players.filter((player) => player.alive);
+  const aliveMafiaCount = alivePlayers.filter((player) => player.role === "mafia").length;
+  const aliveCitizenTeamCount = alivePlayers.length - aliveMafiaCount;
+
+  if (aliveMafiaCount === 0 && players.length) {
+    return "citizen";
+  }
+  if (aliveMafiaCount >= aliveCitizenTeamCount && aliveMafiaCount > 0) {
+    return "mafia";
+  }
+  return null;
+}
+
+function getMafiaWinner() {
+  return state.room?.mafia?.winner || getMafiaWinnerForPlayers(getMafiaPlayers());
+}
+
+function getLastMafiaElimination() {
+  return state.room?.mafia?.lastElimination || null;
+}
+
+function roleLabel(role) {
+  const labels = {
+    mafia: "마피아",
+    citizen: "시민",
+    police: "경찰",
+    doctor: "의사"
+  };
+  return labels[role] || "시민";
+}
+
+function roleDescription(role) {
+  const descriptions = {
+    mafia: "밤마다 한 명을 공격 대상으로 선택하세요. 같은 마피아들의 선택 현황을 보며 대상을 맞출 수 있습니다.",
+    citizen: "낮 토론과 투표로 마피아를 찾아내세요. 밤에는 모두와 같이 한 명을 선택합니다.",
+    police: "밤마다 한 명을 조사할 수 있습니다. 조사 결과는 본인 화면에만 표시됩니다.",
+    doctor: "밤마다 한 명을 보호할 수 있습니다. 보호 대상이 공격 대상과 같으면 탈락자가 발생하지 않습니다."
+  };
+  return descriptions[role] || descriptions.citizen;
+}
+
+function mafiaWinnerText(winner) {
+  return winner === "mafia" ? "마피아팀 승리입니다." : "시민팀 승리입니다.";
+}
+
+function modeLabel(mode) {
+  const labels = {
+    quiz: "자기소개 퀴즈 배틀",
+    compliment: "칭찬 스무고개",
+    mafia: "교실 마피아 게임"
+  };
+  return labels[mode] || "자기소개 퀴즈 배틀";
+}
+
+function clampInt(value, min, max, fallback) {
+  const number = Number.parseInt(value, 10);
+  if (!Number.isFinite(number)) {
+    return fallback;
+  }
+  return Math.max(min, Math.min(max, number));
+}
+
 // =========================
 // 렌더 조각
 // =========================
+
+function renderMafiaPartnerChoices(round) {
+  const mafiaPlayers = getMafiaPlayers().filter((player) => player.role === "mafia" && player.alive);
+  const mafiaActions = round.nightActions?.mafia || {};
+
+  return `
+    <section class="notice warn">
+      <strong>마피아 선택 현황</strong>
+      <ul class="compact-list">
+        ${mafiaPlayers.map((player) => {
+          const action = mafiaActions[player.id];
+          return `<li>${escapeHtml(player.name)} → ${action?.selectedName ? escapeHtml(action.selectedName) : "선택 대기 중"}</li>`;
+        }).join("")}
+      </ul>
+    </section>
+  `;
+}
+
+function renderMafiaWinCheck() {
+  const players = getMafiaPlayers();
+  if (!players.length) {
+    return `<div class="empty">역할을 배정하면 승리 조건을 확인할 수 있습니다.</div>`;
+  }
+
+  const alivePlayers = players.filter((player) => player.alive);
+  const aliveMafiaCount = alivePlayers.filter((player) => player.role === "mafia").length;
+  const aliveCitizenTeamCount = alivePlayers.length - aliveMafiaCount;
+
+  return `
+    <div class="stats">
+      <div class="stat">
+        <span class="muted">생존 마피아</span>
+        <span class="num">${aliveMafiaCount}</span>
+      </div>
+      <div class="stat">
+        <span class="muted">생존 시민팀</span>
+        <span class="num">${aliveCitizenTeamCount}</span>
+      </div>
+      <div class="stat">
+        <span class="muted">승리 조건</span>
+        <span class="num">${getMafiaWinner() ? "충족" : "진행"}</span>
+      </div>
+    </div>
+  `;
+}
+
+function renderMafiaCompletionPanel() {
+  const status = state.room?.status || "waiting";
+  const alivePlayers = getMafiaPlayers().filter((player) => player.alive);
+  const round = getCurrentMafiaRound();
+
+  if (status === "discussion") {
+    return `
+      <div class="timer-wrap">
+        <div class="timer-top">
+          <span>토론 남은 시간</span>
+          <span id="teacherMafiaDiscussionText">${getMafiaSettings().discussionSeconds}초</span>
+        </div>
+        <div class="timer-track"><div id="teacherMafiaDiscussionFill" class="timer-fill"></div></div>
+      </div>
+    `;
+  }
+
+  if (status === "nightAction") {
+    const missing = alivePlayers.filter((player) => !round.nightActions?.[player.role]?.[player.id]);
+    return `
+      <div class="notice ${missing.length ? "warn" : "success"}">
+        밤 행동 ${alivePlayers.length - missing.length} / ${alivePlayers.length} 완료
+        ${missing.length ? `<p class="small">미완료: ${missing.map((player) => escapeHtml(player.name)).join(", ")}</p>` : `<p class="small">모든 생존자가 행동을 마쳤습니다.</p>`}
+      </div>
+    `;
+  }
+
+  if (status === "voting") {
+    const votes = round.votes || {};
+    const missing = alivePlayers.filter((player) => !votes[player.id]);
+    return `
+      <div class="notice ${missing.length ? "warn" : "success"}">
+        투표 ${alivePlayers.length - missing.length} / ${alivePlayers.length} 완료
+        ${missing.length ? `<p class="small">미완료: ${missing.map((player) => escapeHtml(player.name)).join(", ")}</p>` : `<p class="small">모든 생존자가 투표를 마쳤습니다.</p>`}
+      </div>
+    `;
+  }
+
+  return `<p class="muted">현재 단계: ${statusLabel(status)}</p>`;
+}
+
+function renderMafiaRoleTable(players) {
+  if (!players.length) {
+    return `<div class="empty">역할 배정을 누르면 학생별 역할표가 표시됩니다.</div>`;
+  }
+
+  return `
+    <ul class="list">
+      ${players.map((player) => `
+        <li class="list-row split">
+          <div>
+            <strong>${escapeHtml(player.name)}</strong>
+            <p class="muted small">${player.connected ? "접속 중" : "오프라인"} · ${player.alive ? "생존" : "탈락"}</p>
+          </div>
+          <span class="pill ${player.role === "mafia" ? "red" : player.role === "police" ? "blue" : player.role === "doctor" ? "green" : "gold"}">${roleLabel(player.role)}</span>
+        </li>
+      `).join("")}
+    </ul>
+  `;
+}
+
+function renderMafiaNightTeacherPanel(round) {
+  const players = getMafiaPlayers();
+  if (!players.length) {
+    return `<div class="empty">역할 배정 후 밤 행동 기록이 표시됩니다.</div>`;
+  }
+
+  const nightActions = round.nightActions || {};
+  const result = round.nightResult || null;
+  const roleSections = ["mafia", "police", "doctor", "citizen"].map((role) => {
+    const actions = Object.entries(nightActions[role] || {});
+    return `
+      <div class="mini-section">
+        <h4>${roleLabel(role)}</h4>
+        ${actions.length ? `
+          <ul class="compact-list">
+            ${actions.map(([studentId, action]) => {
+              const actor = players.find((player) => player.id === studentId);
+              const resultText = role === "police" && action.result ? ` · ${action.result === "mafia" ? "마피아" : "마피아 아님"}` : "";
+              return `<li>${escapeHtml(actor?.name || "이름 없음")} → ${escapeHtml(action.selectedName || "-")}${resultText}</li>`;
+            }).join("")}
+          </ul>
+        ` : `<p class="muted small">아직 기록이 없습니다.</p>`}
+      </div>
+    `;
+  }).join("");
+
+  return `
+    <div class="stack">
+      ${roleSections}
+      ${result ? `
+        <div class="notice info">
+          <strong>밤 결과</strong>
+          <p>공격 대상: ${escapeHtml(result.mafiaAttackTargetName || "없음")} ${result.mafiaAttackResolvedBy === "random" ? "(동점 랜덤 결정)" : ""}</p>
+          <p>보호 대상: ${escapeHtml((result.doctorProtectedNames || []).join(", ") || "없음")}</p>
+          <p>탈락자: ${escapeHtml(result.eliminatedName || "없음")}</p>
+        </div>
+      ` : ""}
+    </div>
+  `;
+}
+
+function renderMafiaVoteTeacherPanel(round) {
+  const votes = round.votes || {};
+  const voteEntries = Object.entries(votes);
+  const result = round.voteResult || null;
+  const players = getMafiaPlayers();
+
+  return `
+    <div class="stack">
+      ${voteEntries.length ? `
+        <ul class="compact-list">
+          ${voteEntries.map(([studentId, vote]) => {
+            const voter = players.find((player) => player.id === studentId);
+            return `<li>${escapeHtml(voter?.name || "이름 없음")} → ${escapeHtml(vote.selectedName || "-")}</li>`;
+          }).join("")}
+        </ul>
+      ` : `<div class="empty">투표가 시작되면 현황이 표시됩니다.</div>`}
+      ${result ? `
+        <div class="notice info">
+          <strong>투표 결과</strong>
+          <p>최다 득표: ${escapeHtml(result.topVotedName || "없음")}</p>
+          ${result.tiedNames?.length ? `<p>동점: ${result.tiedNames.map((name) => escapeHtml(name)).join(", ")}</p>` : ""}
+          <p>탈락자: ${escapeHtml(result.eliminatedName || "없음")}</p>
+        </div>
+      ` : ""}
+    </div>
+  `;
+}
+
+function renderMafiaFinalResult(viewName, showTeacherControls, force = false) {
+  const winner = getMafiaWinner();
+  const players = getMafiaPlayers();
+
+  setView(viewName, `
+    <section class="screen mafia-mode">
+      <div class="status-bar">
+        <span class="pill red">최종 결과</span>
+        ${showTeacherControls ? `
+          <div class="button-row">
+            <button class="btn danger" data-action="reset" type="button">다시 시작 준비</button>
+            <button class="btn danger" data-action="clear-room" type="button">학생/자료 목록 초기화</button>
+          </div>
+        ` : ""}
+      </div>
+
+      <div class="panel mafia-panel result-panel">
+        <h1>${winner ? mafiaWinnerText(winner) : "게임이 종료되었습니다."}</h1>
+        <p class="lead">최종 생존자와 역할을 확인합니다.</p>
+      </div>
+
+      <section class="panel">
+        <h2>전체 역할표</h2>
+        ${renderMafiaRoleTable(players)}
+      </section>
+    </section>
+  `, () => {
+    document.querySelector("[data-action='reset']")?.addEventListener("click", resetGame);
+    document.querySelector("[data-action='clear-room']")?.addEventListener("click", clearRoomLists);
+  }, force);
+}
 
 function renderTeacherModeControls() {
   const mode = getRoomMode();
@@ -2369,6 +3735,7 @@ function renderTeacherModeControls() {
       <div class="segmented">
         <button class="btn ${mode === "quiz" ? "primary" : "ghost"}" data-switch-mode="quiz" type="button" ${canSwitch ? "" : "disabled"}>자기소개 퀴즈</button>
         <button class="btn ${mode === "compliment" ? "primary" : "ghost"}" data-switch-mode="compliment" type="button" ${canSwitch ? "" : "disabled"}>칭찬 스무고개</button>
+        <button class="btn ${mode === "mafia" ? "primary" : "ghost"}" data-switch-mode="mafia" type="button" ${canSwitch ? "" : "disabled"}>교실 마피아</button>
       </div>
       ${canSwitch ? "" : `<p class="muted small">게임 진행 중에는 모드를 바꿀 수 없습니다.</p>`}
     </section>
@@ -2823,6 +4190,14 @@ function statusLabel(status) {
     targetReveal: "칭찬 대상 공개",
     authorGuess: "작성자 추리",
     authorReveal: "작성자 공개",
+    roleAssigned: "역할 배정",
+    roleReveal: "역할 확인",
+    nightAction: "밤 행동",
+    nightResult: "낮 결과",
+    discussion: "낮 토론",
+    voting: "투표",
+    voteResult: "투표 결과",
+    roleRevealDead: "정체 공개",
     finished: "최종 결과"
   };
   return labels[status] || "대기 중";
@@ -2836,6 +4211,14 @@ function statusPillClass(status) {
     targetReveal: "gold",
     authorGuess: "blue",
     authorReveal: "gold",
+    roleAssigned: "gold",
+    roleReveal: "blue",
+    nightAction: "red",
+    nightResult: "gold",
+    discussion: "blue",
+    voting: "green",
+    voteResult: "gold",
+    roleRevealDead: "red",
     finished: "red"
   };
   return classes[status] || "blue";

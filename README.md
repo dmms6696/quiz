@@ -6,6 +6,7 @@
 
 1. 자기소개 퀴즈 배틀: 학생이 자기소개 4지선다 문제를 만들고 친구들이 풉니다.
 2. 칭찬 스무고개: 학생이 특정 친구에 대한 칭찬 단서를 만들고 친구들이 대상과 작성자를 추리합니다.
+3. 교실 마피아 게임: 역할 확인, 밤 행동, 낮 토론, 투표를 패드로 진행합니다.
 
 ## 1. 파일 구조
 
@@ -32,6 +33,12 @@ const COMPLIMENT_AUTHOR_BONUS = 300;
 const COMPLIMENT_TARGET_BONUS = 200;
 const ALLOW_SOLVE_OWN_QUESTION = true;
 const AUTO_REVEAL_WHEN_TIME_UP = true;
+const DEFAULT_MAFIA_COUNT = 2;
+const DEFAULT_POLICE_COUNT = 1;
+const DEFAULT_DOCTOR_COUNT = 1;
+const DEFAULT_DISCUSSION_SECONDS = 180;
+const VOTE_TIE_RULE = "revote_then_skip";
+const REVEAL_ROLE_ON_ELIMINATION = true;
 ```
 
 칭찬 카드 단서가 4개인 경우에는 `COMPLIMENT_TARGET_POINTS`의 앞 4개 점수만 사용합니다.
@@ -53,8 +60,10 @@ const AUTO_REVEAL_WHEN_TIME_UP = true;
 ```text
 rooms
   roomCode
-    mode: quiz | compliment
-    status: waiting | playing | result | targetReveal | authorGuess | authorReveal | finished
+    mode: quiz | compliment | mafia
+    status: waiting | playing | result | targetReveal | authorGuess | authorReveal
+            roleAssigned | roleReveal | nightAction | nightResult
+            discussion | voting | voteResult | roleRevealDead | finished
     students
       studentId
         name
@@ -92,6 +101,29 @@ rooms
         complimentId
           targetStudentId
           scoreEarned
+
+    mafia
+      round
+      settings
+        mafiaCount
+        policeCount
+        doctorCount
+        discussionSeconds
+        voteTieRule
+      students
+        studentId
+          name
+          role: mafia | citizen | police | doctor
+          team: mafia | citizen
+          alive
+      rounds
+        roundNumber
+          nightActions
+            mafia | police | doctor | citizen
+          nightResult
+          votes
+          voteResult
+      winner: mafia | citizen
 ```
 
 ## 5. 자기소개 퀴즈 배틀 사용 방법
@@ -142,12 +174,39 @@ rooms
 7. 대상이 공개되면 작성자를 추리합니다.
 8. 내가 작성한 칭찬 카드는 맞힐 수 없습니다.
 
-## 7. 초기화 버튼 차이
+## 7. 교실 마피아 게임 사용 방법
+
+교사:
+
+1. 교사로 입장합니다.
+2. 게임 모드에서 교실 마피아 게임을 선택합니다.
+3. 방 코드를 학생들에게 알려 줍니다.
+4. 마피아, 경찰, 의사 인원을 확인하고 설정 저장을 누릅니다.
+5. 역할 배정을 누릅니다.
+6. 역할 확인 시작을 눌러 학생들이 자기 역할을 확인하게 합니다.
+7. 밤 행동 시작을 누릅니다.
+8. 모든 생존자가 패드에서 한 명을 선택하면 밤 결과 계산, 낮 결과 발표를 누릅니다.
+9. 토론 시작을 눌러 낮 토론을 진행합니다.
+10. 투표 시작, 투표 결과 공개, 정체 공개 순서로 진행합니다.
+11. 승리 조건이 충족되지 않으면 다음 밤으로 넘어갑니다.
+
+학생:
+
+1. 방 코드와 이름으로 입장합니다.
+2. 자기 역할을 확인하되 다른 친구에게 보여 주지 않습니다.
+3. 밤 행동 시간에는 생존자 중 한 명을 선택합니다. 자기 자신은 선택할 수 없습니다.
+4. 경찰은 자기 화면에서만 조사 결과를 확인합니다.
+5. 마피아는 같은 마피아와 서로의 선택 현황을 볼 수 있습니다.
+6. 낮 토론 시간에만 말로 추리합니다.
+7. 투표 시간에는 생존자 중 한 명에게 비밀 투표합니다.
+8. 탈락자는 이후 말하거나 투표하지 않고 관전합니다.
+
+## 8. 초기화 버튼 차이
 
 - 게임 초기화: 점수와 답변, 진행 상태를 지웁니다. 학생 목록과 제출 자료는 유지됩니다.
-- 학생/자료 목록 초기화: 학생 목록, 문제 목록, 칭찬 카드, 답변, 점수, 진행 상태를 모두 지웁니다.
+- 학생/자료 목록 초기화: 학생 목록, 문제 목록, 칭찬 카드, 마피아 진행 데이터, 답변, 점수, 진행 상태를 모두 지웁니다.
 
-## 8. 로컬 테스트 방법
+## 9. 로컬 테스트 방법
 
 미리보기 서버는 자동으로 실행하지 않았습니다. 파일을 받은 뒤 원하는 포트로 직접 정적 서버를 실행하세요.
 
@@ -157,7 +216,7 @@ python -m http.server 5500
 
 브라우저에서 `http://localhost:5500`으로 접속합니다.
 
-## 9. 배포 방법
+## 10. 배포 방법
 
 GitHub Pages:
 
@@ -173,12 +232,15 @@ Netlify:
 2. 파일이 들어 있는 폴더를 끌어다 놓습니다.
 3. 배포 주소를 학생들에게 공유합니다.
 
-## 10. 나중에 추가하면 좋은 기능
+## 11. 나중에 추가하면 좋은 기능
 
 - 교사용 QR 코드 자동 생성
 - Firebase Authentication 기반 교사 권한 분리
 - App Check 적용
 - 칭찬 카드 익명성 수준 설정
+- 마피아 정체 비공개 모드
+- 마피아 재투표 세부 규칙
+- 마피아 게임 채팅 또는 메모 기능
 - 부적절한 단어 자동 경고
 - 결과 CSV 다운로드
 - 방 만료 시간 설정

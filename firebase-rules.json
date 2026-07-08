@@ -7,10 +7,10 @@
         ".read": true,
         ".write": true,
         "mode": {
-          ".validate": "newData.val() === 'quiz' || newData.val() === 'compliment'"
+          ".validate": "newData.val() === 'quiz' || newData.val() === 'compliment' || newData.val() === 'mafia'"
         },
         "status": {
-          ".validate": "newData.val() === 'waiting' || newData.val() === 'collecting' || newData.val() === 'playing' || newData.val() === 'result' || newData.val() === 'targetReveal' || newData.val() === 'authorGuess' || newData.val() === 'authorReveal' || newData.val() === 'finished'"
+          ".validate": "newData.val() === 'waiting' || newData.val() === 'collecting' || newData.val() === 'playing' || newData.val() === 'result' || newData.val() === 'targetReveal' || newData.val() === 'authorGuess' || newData.val() === 'authorReveal' || newData.val() === 'roleAssigned' || newData.val() === 'roleReveal' || newData.val() === 'nightAction' || newData.val() === 'nightResult' || newData.val() === 'discussion' || newData.val() === 'voting' || newData.val() === 'voteResult' || newData.val() === 'roleRevealDead' || newData.val() === 'finished'"
         },
         "currentQuestionIndex": {
           ".validate": "newData.isNumber() && newData.val() >= -1"
