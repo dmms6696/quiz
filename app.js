@@ -849,7 +849,8 @@ function renderMafiaNightAction(force = false) {
 
   const round = getCurrentMafiaRound();
   const action = getMafiaNightAction(player.id, player.role);
-  const options = getMafiaSelectablePlayers(player.id);
+  const canSelectSelf = player.role === "doctor";
+  const options = getMafiaSelectablePlayers(player.id, { allowSelf: canSelectSelf });
   const disabled = Boolean(action);
 
   if (isMafiaNightComplete() && !round.nightResult) {
@@ -866,6 +867,7 @@ function renderMafiaNightAction(force = false) {
       <div class="panel mafia-panel">
         <h2>밤 행동 시간입니다.</h2>
         <p class="lead">한 명을 선택하세요. 선택 후 변경할 수 없습니다.</p>
+        ${canSelectSelf ? `<p class="muted">의사는 자기 자신도 보호 대상으로 선택할 수 있습니다.</p>` : ""}
         ${action ? `<div class="notice info">밤 행동을 완료했습니다. 모든 학생의 행동이 끝날 때까지 기다려 주세요.</div>` : ""}
         ${player.role === "police" && action?.result ? `
           <div class="notice ${action.result === "mafia" ? "danger" : "info"}">
@@ -983,7 +985,7 @@ function renderMafiaVoteResult(force = false) {
 
 function renderMafiaRoleRevealDead(force = false) {
   const elimination = getLastMafiaElimination();
-  const roleText = elimination?.role ? roleLabel(elimination.role) : "알 수 없음";
+  const roleText = elimination?.role ? publicMafiaRoleLabel(elimination.role) : "알 수 없음";
 
   setView("mafia-role-dead", `
     <section class="screen mafia-mode">
@@ -1876,7 +1878,7 @@ async function submitMafiaNightAction(selectedStudentId) {
     return;
   }
 
-  if (!getMafiaSettings().selfSelectAllowed && selectedStudentId === state.studentId) {
+  if (!getMafiaSettings().selfSelectAllowed && player.role !== "doctor" && selectedStudentId === state.studentId) {
     showToast("자기 자신은 선택할 수 없습니다.", "error");
     return;
   }
@@ -3337,10 +3339,10 @@ function getMafiaVote(studentId) {
   return getCurrentMafiaRound().votes?.[studentId] || null;
 }
 
-function getMafiaSelectablePlayers(selfId) {
+function getMafiaSelectablePlayers(selfId, { allowSelf = false } = {}) {
   const settings = getMafiaSettings();
   return getMafiaPlayers().filter((player) => {
-    return player.alive && (settings.selfSelectAllowed || player.id !== selfId);
+    return player.alive && (settings.selfSelectAllowed || allowSelf || player.id !== selfId);
   });
 }
 
@@ -3481,6 +3483,10 @@ function roleLabel(role) {
     doctor: "의사"
   };
   return labels[role] || "시민";
+}
+
+function publicMafiaRoleLabel(role) {
+  return role === "mafia" ? "마피아" : "시민";
 }
 
 function roleDescription(role) {
