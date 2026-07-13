@@ -60,6 +60,133 @@ const DEFAULT_DISCUSSION_SECONDS = 180;
 const VOTE_TIE_RULE = "revote_then_skip";
 const REVEAL_ROLE_ON_ELIMINATION = true;
 const MAFIA_SELF_SELECT_ALLOWED = false;
+const GHOST_BINGO_REQUIRED_CONDITIONS = 8;
+const GHOST_BINGO_FREE_ID = "FREE";
+const GHOST_CHAT_MAX_LENGTH = 100;
+const GHOST_CHAT_COOLDOWN_MS = 1000;
+
+const GHOST_BINGO_CONDITIONS = [
+  {
+    id: "vote_tie",
+    label: "투표 동점",
+    description: "낮 투표에서 공동 최다 득표자가 발생합니다.",
+    matchAt: (events) => getFirstEventTime(events, (event) => event.type === "VOTE_RESULT" && event.tiedStudentIds.length >= 2)
+  },
+  {
+    id: "vote_majority",
+    label: "과반 득표",
+    description: "한 명이 전체 유효표의 과반수를 얻습니다.",
+    matchAt: (events) => getFirstEventTime(events, (event) => event.type === "VOTE_RESULT" && event.totalVotes > 0 && event.topCount > event.totalVotes / 2)
+  },
+  {
+    id: "vote_one_margin",
+    label: "1표 차 승부",
+    description: "최다 득표자가 1표 차이로 결정됩니다.",
+    matchAt: (events) => getFirstEventTime(events, (event) => event.type === "VOTE_RESULT" && !event.tiedStudentIds.length && event.topCount - event.secondCount === 1)
+  },
+  {
+    id: "vote_four_candidates",
+    label: "표가 넓게 흩어짐",
+    description: "한 번의 낮 투표에서 4명 이상이 1표 이상 받습니다.",
+    matchAt: (events) => getFirstEventTime(events, (event) => event.type === "VOTE_RESULT" && event.distinctVotedCount >= 4)
+  },
+  {
+    id: "vote_no_execution",
+    label: "처형 없음",
+    description: "낮 투표 결과 아무도 처형되지 않습니다.",
+    matchAt: (events) => getFirstEventTime(events, (event) => event.type === "VOTE_RESULT" && !event.eliminatedStudentId && !event.revotedTieRequired)
+  },
+  {
+    id: "consecutive_top",
+    label: "연속 최다 득표",
+    description: "같은 플레이어가 두 번 연속 최다 득표자가 됩니다.",
+    matchAt: getConsecutiveTopVoteMatchTime
+  },
+  {
+    id: "same_target_voted_twice",
+    label: "계속 의심받는 사람",
+    description: "같은 플레이어가 두 번 연속 낮 투표에서 1표 이상 받습니다.",
+    matchAt: getSameTargetVotedTwiceMatchTime
+  },
+  {
+    id: "new_ghost",
+    label: "새 유령 등장",
+    description: "새로운 탈락자가 한 명 생깁니다.",
+    matchAt: (events) => getFirstEventTime(events, (event) => Boolean(event.eliminatedStudentId))
+  },
+  {
+    id: "police_died",
+    label: "경찰 사망",
+    description: "경찰 역할 플레이어가 탈락합니다.",
+    matchAt: (events) => getFirstEventTime(events, (event) => event.eliminatedRole === "police")
+  },
+  {
+    id: "doctor_died",
+    label: "의사 사망",
+    description: "의사 역할 플레이어가 탈락합니다.",
+    matchAt: (events) => getFirstEventTime(events, (event) => event.eliminatedRole === "doctor")
+  },
+  {
+    id: "mafia_died",
+    label: "마피아 사망",
+    description: "마피아 역할 플레이어가 탈락합니다.",
+    matchAt: (events) => getFirstEventTime(events, (event) => event.eliminatedRole === "mafia")
+  },
+  {
+    id: "citizen_team_died",
+    label: "시민팀 사망",
+    description: "시민팀 플레이어가 탈락합니다.",
+    matchAt: (events) => getFirstEventTime(events, (event) => Boolean(event.eliminatedStudentId) && event.eliminatedRole !== "mafia")
+  },
+  {
+    id: "alive_five_or_less",
+    label: "생존자 5명 이하",
+    description: "탈락 처리 후 생존자가 5명 이하가 됩니다.",
+    matchAt: (events) => getFirstEventTime(events, (event) => Boolean(event.eliminatedStudentId) && event.aliveCountAfter <= 5)
+  },
+  {
+    id: "citizen_team_two_deaths",
+    label: "시민팀 연속 사망",
+    description: "시민팀 플레이어가 두 번 연속 탈락합니다.",
+    matchAt: getConsecutiveCitizenTeamDeathsMatchTime
+  },
+  {
+    id: "mafia_executed",
+    label: "마피아 처형",
+    description: "마피아가 낮 투표 결과로 처형됩니다.",
+    matchAt: (events) => getFirstEventTime(events, (event) => event.type === "VOTE_RESULT" && event.eliminatedRole === "mafia")
+  },
+  {
+    id: "night_death",
+    label: "밤의 희생자",
+    description: "밤 결과에서 플레이어가 사망합니다.",
+    matchAt: (events) => getFirstEventTime(events, (event) => event.type === "NIGHT_RESULT" && Boolean(event.eliminatedStudentId))
+  },
+  {
+    id: "no_night_death",
+    label: "밤의 평화",
+    description: "밤 결과에서 아무도 사망하지 않습니다.",
+    matchAt: (events) => getFirstEventTime(events, (event) => event.type === "NIGHT_RESULT" && !event.eliminatedStudentId)
+  },
+  {
+    id: "five_votes",
+    label: "5표 집중",
+    description: "낮 투표에서 한 명이 5표 이상 받습니다.",
+    matchAt: (events) => getFirstEventTime(events, (event) => event.type === "VOTE_RESULT" && event.topCount >= 5)
+  },
+  {
+    id: "three_single_votes",
+    label: "외로운 한 표들",
+    description: "한 번의 낮 투표에서 3명 이상이 정확히 1표씩 받습니다.",
+    matchAt: (events) => getFirstEventTime(events, (event) => event.type === "VOTE_RESULT" && event.singleVoteCandidateCount >= 3)
+  },
+  {
+    id: "top_margin_three",
+    label: "압도적 지목",
+    description: "최다 득표자와 2위의 표 차이가 3표 이상 납니다.",
+    matchAt: (events) => getFirstEventTime(events, (event) => event.type === "VOTE_RESULT" && !event.tiedStudentIds.length && event.topCount - event.secondCount >= 3)
+  }
+];
 
 // =========================
 // 앱 상태
@@ -79,7 +206,11 @@ const state = {
   timerId: null,
   toastId: null,
   answering: false,
-  skipWriteKey: ""
+  skipWriteKey: "",
+  ghostJoinWriteKey: "",
+  ghostBingoDraft: null,
+  selectedGhostBingoConditionId: "",
+  lastGhostChatAt: 0
 };
 
 const appEl = document.querySelector("#app");
@@ -731,6 +862,13 @@ function renderMafiaStudentRoute() {
     return;
   }
 
+  const player = getMafiaPlayer(state.studentId);
+  if (status !== "finished" && player && !player.alive) {
+    ensureMafiaGhostEntry(player);
+    renderMafiaGhostMode(true);
+    return;
+  }
+
   if (status === "roleAssigned" || status === "roleReveal") {
     renderMafiaRoleReveal(true);
     return;
@@ -795,7 +933,7 @@ function renderMafiaStudentWaiting(force = false) {
         <div class="notice warn">
           친구를 비난하거나 몰아가는 말은 하지 않습니다. 말과 행동을 근거로 추리하고, 장난이 심해지면 게임을 중단할 수 있습니다.
         </div>
-        <div class="notice info">탈락자는 이후 말하거나 투표하지 않고 관전합니다.</div>
+        <div class="notice info">탈락자는 이후 말하거나 투표하지 않고 유령 모드에서 빙고와 유령 채팅에 참여합니다.</div>
       </div>
     </section>
   `, () => {
@@ -1004,10 +1142,103 @@ function renderMafiaSpectator(label, message, force = false) {
       <div class="panel mafia-panel">
         <span class="pill red">관전</span>
         <h2>${escapeHtml(message)}</h2>
-        <p class="lead">탈락자는 이후 말하거나 투표하지 않고 관전합니다.</p>
+        <p class="lead">탈락자는 이후 말하거나 투표하지 않고 유령 모드로 이동합니다.</p>
       </div>
     </section>
   `, null, force);
+}
+
+function renderMafiaGhostMode(force = false) {
+  const player = getMafiaPlayer(state.studentId);
+  const ghost = getMafiaGhost(state.studentId);
+
+  if (!player) {
+    renderMafiaUnassigned(true);
+    return;
+  }
+
+  if (!ghost) {
+    ensureMafiaGhostEntry(player);
+    setView("mafia-ghost-joining", `
+      <section class="screen mafia-mode">
+        <div class="panel mafia-panel">
+          <span class="pill red">유령 모드</span>
+          <h2>유령 모드로 이동하는 중입니다.</h2>
+          <p class="lead">잠시만 기다려 주세요.</p>
+        </div>
+      </section>
+    `, null, force);
+    return;
+  }
+
+  if (ghost.bingoConfirmed) {
+    syncGhostBingoProgress(ghost);
+  }
+
+  setView(`mafia-ghost-${Boolean(ghost.bingoConfirmed)}-${getMafiaRoundNumber()}`, `
+    <section class="screen mafia-mode ghost-mode">
+      <div class="status-bar">
+        <div>
+          <p class="eyebrow">사망자 전용</p>
+          <h1>👻 당신은 유령이 되었습니다.</h1>
+        </div>
+        <span class="pill ${statusPillClass(state.room.status || "waiting")}">${statusLabel(state.room.status || "waiting")}</span>
+      </div>
+
+      <div class="notice warn">
+        생존자에게 게임 정보나 역할 정보를 전달해서는 안 됩니다. 유령 채팅은 사망자와 선생님만 보는 공간입니다.
+      </div>
+
+      ${renderMafiaGhostPublicStatus()}
+
+      <div class="ghost-layout">
+        <section class="panel mafia-panel">
+          ${ghost.bingoConfirmed ? renderGhostBingoLive(ghost) : renderGhostBingoBuilder(ghost)}
+        </section>
+        <section class="panel mafia-panel">
+          <h2>유령 전용 채팅</h2>
+          ${renderGhostChatPanel({ teacher: false, ghost, allowSend: state.room.status !== "finished" })}
+        </section>
+      </div>
+    </section>
+  `, () => {
+    setupGhostBingoHandlers(ghost);
+    setupGhostChatHandlers();
+    scrollGhostChatToBottom();
+  }, force);
+}
+
+function renderMafiaGhostPublicStatus() {
+  const players = getMafiaPlayers();
+  const aliveCount = players.filter((player) => player.alive).length;
+  const round = getCurrentMafiaRound();
+  const nightResult = round.nightResult || null;
+  const voteResult = round.voteResult || null;
+  const lastEvent = voteResult?.calculatedAt && (!nightResult?.calculatedAt || voteResult.calculatedAt >= nightResult.calculatedAt)
+    ? `최근 투표: ${voteResult.eliminatedName ? `${escapeHtml(voteResult.eliminatedName)} 탈락` : voteResult.revotedTieRequired ? "동점 재투표 필요" : "탈락자 없음"}`
+    : nightResult?.calculatedAt
+      ? `최근 밤: ${nightResult.eliminatedName ? `${escapeHtml(nightResult.eliminatedName)} 탈락` : "탈락자 없음"}`
+      : "아직 공개된 결과가 없습니다.";
+
+  return `
+    <section class="panel tight ghost-status-panel">
+      <div class="stats">
+        <div class="stat">
+          <span class="muted">현재 라운드</span>
+          <span class="num">${getMafiaRoundNumber()}</span>
+        </div>
+        <div class="stat">
+          <span class="muted">생존자</span>
+          <span class="num">${aliveCount}</span>
+        </div>
+        <div class="stat">
+          <span class="muted">현재 단계</span>
+          <span class="num">${statusLabel(state.room.status || "waiting")}</span>
+        </div>
+      </div>
+      <p class="muted">${lastEvent}</p>
+    </section>
+  `;
 }
 
 function renderStudentQuiz(force = false) {
@@ -1386,6 +1617,7 @@ function renderMafiaTeacherDashboard(force = true) {
   const canSwitch = status === "waiting";
   const canStartVote = status === "discussion" || (status === "voteResult" && Boolean(round.voteResult?.revotedTieRequired));
   const canStartNextNight = status === "roleRevealDead" || (status === "voteResult" && !round.voteResult?.eliminatedStudentId && !round.voteResult?.revotedTieRequired);
+  syncAllGhostBingoProgress();
 
   setView("teacher-mafia-dashboard", `
     <section class="screen mafia-mode">
@@ -1497,6 +1729,17 @@ function renderMafiaTeacherDashboard(force = true) {
             <section class="panel">
               <h3>투표 현황</h3>
               ${renderMafiaVoteTeacherPanel(round)}
+            </section>
+          </div>
+
+          <div class="grid-2">
+            <section class="panel">
+              <h3>유령 빙고 현황</h3>
+              ${renderGhostBingoLeaderboard()}
+            </section>
+            <section class="panel">
+              <h3>유령 채팅</h3>
+              ${renderGhostChatPanel({ teacher: true, allowSend: false })}
             </section>
           </div>
         </div>
@@ -2415,6 +2658,8 @@ async function assignMafiaRoles() {
         rounds: null,
         winner: null,
         lastElimination: null,
+        ghosts: null,
+        ghostChat: null,
         discussionStartedAt: null,
         assignedAt: Date.now()
       }
@@ -2503,6 +2748,7 @@ async function publishMafiaNightResult() {
   if (nightResult.eliminatedStudentId) {
     const eliminated = getMafiaPlayer(nightResult.eliminatedStudentId);
     updates[`mafia/students/${nightResult.eliminatedStudentId}/alive`] = false;
+    updates[`mafia/rounds/${getMafiaRoundNumber()}/nightResult/publishedAt`] = Date.now();
     updates["mafia/lastElimination"] = {
       studentId: nightResult.eliminatedStudentId,
       name: nightResult.eliminatedName,
@@ -2510,7 +2756,9 @@ async function publishMafiaNightResult() {
       source: "night",
       round: getMafiaRoundNumber()
     };
+    addMafiaGhostJoinUpdates(updates, eliminated, "night");
   } else {
+    updates[`mafia/rounds/${getMafiaRoundNumber()}/nightResult/publishedAt`] = Date.now();
     updates["mafia/lastElimination"] = null;
   }
 
@@ -2578,6 +2826,7 @@ async function revealMafiaVoteResult() {
       source: "vote",
       round: getMafiaRoundNumber()
     };
+    addMafiaGhostJoinUpdates(updates, eliminated, "vote");
   }
 
   const projectedPlayers = projectMafiaPlayersAfterElimination(resultData.eliminatedStudentId);
@@ -3259,6 +3508,8 @@ function getDefaultMafiaState() {
     rounds: {},
     winner: null,
     lastElimination: null,
+    ghosts: {},
+    ghostChat: {},
     discussionStartedAt: null
   };
 }
@@ -3337,6 +3588,374 @@ function getMafiaNightAction(studentId, role) {
 
 function getMafiaVote(studentId) {
   return getCurrentMafiaRound().votes?.[studentId] || null;
+}
+
+function getMafiaGhosts() {
+  const raw = state.room?.mafia?.ghosts || {};
+  return Object.entries(raw)
+    .map(([id, ghost]) => ({
+      id,
+      playerId: ghost.playerId || id,
+      name: ghost.name || getStudentNameById(id, "이름 없음"),
+      role: ghost.role || "citizen",
+      joinedAt: Number(ghost.joinedAt || 0),
+      source: ghost.source || "",
+      round: Number(ghost.round || 1),
+      bingoConfirmed: Boolean(ghost.bingoConfirmed),
+      confirmedAt: Number(ghost.confirmedAt || 0),
+      selectedIds: normalizeGhostSelectedIds(ghost.selectedIds),
+      board: normalizeGhostBingoBoard(ghost.board),
+      checked: ghost.checked || {},
+      bingoLines: Number(ghost.bingoLines || 0),
+      checkedCount: Number(ghost.checkedCount || 0),
+      firstBingoAt: Number(ghost.firstBingoAt || 0)
+    }))
+    .sort((a, b) => a.joinedAt - b.joinedAt || String(a.name).localeCompare(String(b.name), "ko"));
+}
+
+function getMafiaGhost(studentId) {
+  return getMafiaGhosts().find((ghost) => ghost.id === studentId || ghost.playerId === studentId) || null;
+}
+
+function addMafiaGhostJoinUpdates(updates, player, source) {
+  if (!player || getMafiaGhost(player.id)) {
+    return;
+  }
+
+  const now = Date.now();
+  const messageId = createGhostChatMessageId();
+  updates[`mafia/ghosts/${player.id}`] = {
+    playerId: player.id,
+    name: player.name,
+    role: player.role || "citizen",
+    joinedAt: now,
+    source,
+    round: getMafiaRoundNumber(),
+    bingoConfirmed: false,
+    selectedIds: null,
+    board: null,
+    checked: null,
+    bingoLines: 0,
+    checkedCount: 0,
+    firstBingoAt: null
+  };
+  updates[`mafia/ghostChat/${messageId}`] = {
+    messageId,
+    playerId: player.id,
+    playerName: player.name,
+    messageType: "system",
+    content: `👻 ${player.name}님이 저승에 도착했습니다.`,
+    createdAt: now,
+    round: getMafiaRoundNumber()
+  };
+}
+
+async function ensureMafiaGhostEntry(player) {
+  if (!db || !player || getMafiaGhost(player.id)) {
+    return;
+  }
+
+  const key = `${state.roomCode}:${player.id}:${getMafiaRoundNumber()}`;
+  if (state.ghostJoinWriteKey === key) {
+    return;
+  }
+
+  state.ghostJoinWriteKey = key;
+  const updates = {};
+  addMafiaGhostJoinUpdates(updates, player, "sync");
+
+  try {
+    await update(roomRef(state.roomCode), updates);
+  } catch (error) {
+    console.error(error);
+  } finally {
+    state.ghostJoinWriteKey = "";
+  }
+}
+
+function createGhostChatMessageId() {
+  return `ghost_${Date.now()}_${Math.random().toString(16).slice(2, 10)}`;
+}
+
+function getMafiaGhostChatMessages({ teacher = false, ghost = null } = {}) {
+  const raw = state.room?.mafia?.ghostChat || {};
+  return Object.entries(raw)
+    .map(([id, message]) => ({
+      id,
+      messageId: message.messageId || id,
+      playerId: message.playerId || "",
+      playerName: message.playerName || "",
+      content: message.content || "",
+      messageType: message.messageType || "user",
+      createdAt: Number(message.createdAt || 0)
+    }))
+    .filter((message) => {
+      if (teacher || !ghost) {
+        return true;
+      }
+      return Number(message.createdAt || 0) >= Number(ghost.joinedAt || 0);
+    })
+    .sort((a, b) => a.createdAt - b.createdAt || String(a.messageId).localeCompare(String(b.messageId)));
+}
+
+function getGhostBingoCondition(conditionId) {
+  return GHOST_BINGO_CONDITIONS.find((condition) => condition.id === conditionId) || null;
+}
+
+function normalizeGhostSelectedIds(value) {
+  const source = Array.isArray(value)
+    ? value
+    : Object.keys(value || {}).sort((a, b) => Number(a) - Number(b)).map((key) => value[key]);
+  const validIds = new Set(GHOST_BINGO_CONDITIONS.map((condition) => condition.id));
+  return source
+    .map(String)
+    .filter((id, index, items) => validIds.has(id) && items.indexOf(id) === index)
+    .slice(0, GHOST_BINGO_REQUIRED_CONDITIONS);
+}
+
+function normalizeGhostBingoBoard(value) {
+  const source = Array.isArray(value)
+    ? value
+    : Object.keys(value || {}).sort((a, b) => Number(a) - Number(b)).map((key) => value[key]);
+  const validIds = new Set(GHOST_BINGO_CONDITIONS.map((condition) => condition.id));
+  const board = Array.from({ length: 9 }, (_, index) => {
+    if (index === 4) {
+      return GHOST_BINGO_FREE_ID;
+    }
+    const id = String(source[index] || "");
+    return validIds.has(id) ? id : "";
+  });
+  board[4] = GHOST_BINGO_FREE_ID;
+  return board;
+}
+
+function getGhostBingoDraft(ghost) {
+  if (!state.ghostBingoDraft || state.ghostBingoDraft.studentId !== state.studentId) {
+    state.ghostBingoDraft = {
+      studentId: state.studentId,
+      selectedIds: normalizeGhostSelectedIds(ghost.selectedIds),
+      board: normalizeGhostBingoBoard(ghost.board)
+    };
+    state.selectedGhostBingoConditionId = state.ghostBingoDraft.selectedIds[0] || "";
+  }
+  state.ghostBingoDraft.board[4] = GHOST_BINGO_FREE_ID;
+  return state.ghostBingoDraft;
+}
+
+function toggleGhostBingoCondition(conditionId) {
+  const condition = getGhostBingoCondition(conditionId);
+  const ghost = getMafiaGhost(state.studentId);
+  if (!condition || !ghost || ghost.bingoConfirmed) {
+    return;
+  }
+
+  const draft = getGhostBingoDraft(ghost);
+  const selectedIndex = draft.selectedIds.indexOf(conditionId);
+
+  if (selectedIndex >= 0) {
+    if (state.selectedGhostBingoConditionId === conditionId) {
+      state.selectedGhostBingoConditionId = conditionId;
+      renderMafiaGhostMode(true);
+      return;
+    }
+    state.selectedGhostBingoConditionId = conditionId;
+    renderMafiaGhostMode(true);
+    return;
+  }
+
+  if (draft.selectedIds.length >= GHOST_BINGO_REQUIRED_CONDITIONS) {
+    showToast("빙고 조건은 8개까지만 선택할 수 있습니다.", "error");
+    return;
+  }
+
+  draft.selectedIds.push(conditionId);
+  state.selectedGhostBingoConditionId = conditionId;
+  renderMafiaGhostMode(true);
+}
+
+function removeGhostBingoCondition(conditionId) {
+  const ghost = getMafiaGhost(state.studentId);
+  if (!ghost || ghost.bingoConfirmed) {
+    return;
+  }
+  const draft = getGhostBingoDraft(ghost);
+  draft.selectedIds = draft.selectedIds.filter((id) => id !== conditionId);
+  draft.board = draft.board.map((id, index) => index === 4 ? GHOST_BINGO_FREE_ID : id === conditionId ? "" : id);
+  if (state.selectedGhostBingoConditionId === conditionId) {
+    state.selectedGhostBingoConditionId = draft.selectedIds[0] || "";
+  }
+  renderMafiaGhostMode(true);
+}
+
+function placeGhostBingoCondition(cellIndex) {
+  const ghost = getMafiaGhost(state.studentId);
+  if (!ghost || ghost.bingoConfirmed) {
+    return;
+  }
+
+  const index = Number(cellIndex);
+  if (!Number.isInteger(index) || index < 0 || index > 8 || index === 4) {
+    return;
+  }
+
+  const draft = getGhostBingoDraft(ghost);
+  const selectedId = state.selectedGhostBingoConditionId;
+
+  if (!selectedId || !draft.selectedIds.includes(selectedId)) {
+    showToast("먼저 배치할 조건 카드를 눌러 주세요.", "error");
+    return;
+  }
+
+  const previousIndex = draft.board.indexOf(selectedId);
+  if (previousIndex === index) {
+    return;
+  }
+
+  if (previousIndex >= 0) {
+    const targetId = draft.board[index] || "";
+    draft.board[index] = selectedId;
+    draft.board[previousIndex] = targetId;
+    state.selectedGhostBingoConditionId = targetId || selectedId;
+  } else {
+    const targetId = draft.board[index] || "";
+    draft.board[index] = selectedId;
+    state.selectedGhostBingoConditionId = targetId || selectedId;
+  }
+
+  renderMafiaGhostMode(true);
+}
+
+async function confirmGhostBingoBoard() {
+  const ghost = getMafiaGhost(state.studentId);
+  if (!ghost || ghost.bingoConfirmed) {
+    return;
+  }
+
+  const draft = getGhostBingoDraft(ghost);
+  const selectedIds = normalizeGhostSelectedIds(draft.selectedIds);
+  const board = normalizeGhostBingoBoard(draft.board);
+  const boardIds = board.filter((id, index) => index !== 4 && id);
+  const uniqueBoardIds = new Set(boardIds);
+
+  if (selectedIds.length !== GHOST_BINGO_REQUIRED_CONDITIONS || boardIds.length !== GHOST_BINGO_REQUIRED_CONDITIONS || uniqueBoardIds.size !== GHOST_BINGO_REQUIRED_CONDITIONS) {
+    showToast("조건 8개를 고르고 모든 칸에 배치해 주세요.", "error");
+    return;
+  }
+
+  if (boardIds.some((id) => !selectedIds.includes(id))) {
+    showToast("선택하지 않은 조건이 빙고판에 들어 있습니다.", "error");
+    return;
+  }
+
+  try {
+    await update(ref(db, `rooms/${state.roomCode}/mafia/ghosts/${state.studentId}`), {
+      selectedIds,
+      board,
+      bingoConfirmed: true,
+      confirmedAt: Date.now(),
+      checked: null,
+      bingoLines: 0,
+      checkedCount: 0,
+      firstBingoAt: null
+    });
+    state.ghostBingoDraft = null;
+    state.selectedGhostBingoConditionId = "";
+    showToast("유령 빙고판을 확정했습니다.", "success");
+  } catch (error) {
+    console.error(error);
+    showToast("빙고판을 저장하지 못했습니다.", "error");
+  }
+}
+
+function setupGhostBingoHandlers(ghost) {
+  if (!ghost || ghost.bingoConfirmed) {
+    return;
+  }
+
+  document.querySelectorAll("[data-ghost-condition]").forEach((button) => {
+    button.addEventListener("click", () => {
+      if (button.classList.contains("selected") && state.selectedGhostBingoConditionId === button.dataset.ghostCondition) {
+        removeGhostBingoCondition(button.dataset.ghostCondition);
+        return;
+      }
+      toggleGhostBingoCondition(button.dataset.ghostCondition);
+    });
+  });
+
+  document.querySelectorAll("[data-ghost-cell]").forEach((button) => {
+    button.addEventListener("click", () => placeGhostBingoCondition(button.dataset.ghostCell));
+  });
+
+  document.querySelector("[data-action='ghost-confirm-bingo']")?.addEventListener("click", confirmGhostBingoBoard);
+}
+
+function setupGhostChatHandlers() {
+  const input = document.querySelector("#ghostChatInput");
+  const button = document.querySelector("#ghostChatSendBtn");
+  if (!input || !button) {
+    return;
+  }
+
+  button.addEventListener("click", sendGhostChatMessage);
+  input.addEventListener("keydown", (event) => {
+    if (event.key === "Enter") {
+      event.preventDefault();
+      sendGhostChatMessage();
+    }
+  });
+}
+
+async function sendGhostChatMessage() {
+  const input = document.querySelector("#ghostChatInput");
+  const player = getMafiaPlayer(state.studentId);
+  const ghost = getMafiaGhost(state.studentId);
+  const content = cleanText(input?.value || "").slice(0, GHOST_CHAT_MAX_LENGTH);
+
+  if (!input || !player || player.alive || !ghost) {
+    showToast("유령만 채팅을 보낼 수 있습니다.", "error");
+    return;
+  }
+
+  if ((state.room?.status || "waiting") === "finished") {
+    showToast("게임이 끝난 뒤에는 채팅을 보낼 수 없습니다.", "error");
+    return;
+  }
+
+  if (!content) {
+    showToast("메시지를 입력해 주세요.", "error");
+    return;
+  }
+
+  const now = Date.now();
+  if (now - state.lastGhostChatAt < GHOST_CHAT_COOLDOWN_MS) {
+    showToast("잠시 후 다시 보내 주세요.", "error");
+    return;
+  }
+
+  state.lastGhostChatAt = now;
+  const messageId = createGhostChatMessageId();
+  try {
+    await set(ref(db, `rooms/${state.roomCode}/mafia/ghostChat/${messageId}`), {
+      messageId,
+      playerId: state.studentId,
+      playerName: player.name || state.studentName,
+      messageType: "user",
+      content,
+      createdAt: now,
+      round: getMafiaRoundNumber()
+    });
+    input.value = "";
+  } catch (error) {
+    console.error(error);
+    showToast("유령 채팅을 보내지 못했습니다.", "error");
+  }
+}
+
+function scrollGhostChatToBottom() {
+  const chatList = document.querySelector("#ghostChatList");
+  if (chatList) {
+    chatList.scrollTop = chatList.scrollHeight;
+  }
 }
 
 function getMafiaSelectablePlayers(selfId, { allowSelf = false } = {}) {
@@ -3444,6 +4063,238 @@ function getTopSelectionCandidates(counts) {
   return entries
     .filter(([, count]) => Number(count) === max)
     .map(([id]) => id);
+}
+
+function getMafiaBingoEvents() {
+  const players = getMafiaPlayers();
+  const playerMap = Object.fromEntries(players.map((player) => [player.id, player]));
+  const aliveSet = new Set(players.map((player) => player.id));
+  const rounds = state.room?.mafia?.rounds || {};
+  const events = [];
+
+  Object.keys(rounds)
+    .sort((a, b) => Number(a) - Number(b))
+    .forEach((roundKey) => {
+      const round = rounds[roundKey] || {};
+      const roundNumber = Number(roundKey);
+      const nightResult = round.nightResult || null;
+
+      if (nightResult?.calculatedAt || nightResult?.publishedAt) {
+        const eliminatedId = nightResult.eliminatedStudentId || "";
+        const eliminated = playerMap[eliminatedId] || {};
+        if (eliminatedId) {
+          aliveSet.delete(eliminatedId);
+        }
+        events.push({
+          type: "NIGHT_RESULT",
+          round: roundNumber,
+          timestamp: Number(nightResult.publishedAt || nightResult.calculatedAt || Date.now()),
+          eliminatedStudentId: eliminatedId,
+          eliminatedName: nightResult.eliminatedName || eliminated.name || "",
+          eliminatedRole: eliminated.role || "",
+          eliminatedTeam: eliminated.role === "mafia" ? "mafia" : "citizen",
+          savedByDoctor: Boolean(nightResult.savedByDoctor),
+          aliveCountAfter: aliveSet.size
+        });
+      }
+
+      const voteResult = round.voteResult || null;
+      if (voteResult?.calculatedAt) {
+        const counts = voteResult.voteCounts || countSelections(Object.values(round.votes || {}));
+        const countValues = Object.values(counts).map((count) => Number(count || 0)).sort((a, b) => b - a);
+        const topCount = countValues[0] || 0;
+        const secondCount = countValues[1] || 0;
+        const eliminatedId = voteResult.eliminatedStudentId || "";
+        const eliminated = playerMap[eliminatedId] || {};
+        if (eliminatedId) {
+          aliveSet.delete(eliminatedId);
+        }
+        events.push({
+          type: "VOTE_RESULT",
+          round: roundNumber,
+          timestamp: Number(voteResult.calculatedAt || Date.now()),
+          topVotedStudentId: voteResult.topVotedStudentId || "",
+          topVotedName: voteResult.topVotedName || "",
+          tiedStudentIds: voteResult.tiedStudentIds || [],
+          voteCounts: counts,
+          totalVotes: countValues.reduce((sum, count) => sum + count, 0),
+          topCount,
+          secondCount,
+          distinctVotedCount: Object.keys(counts).length,
+          singleVoteCandidateCount: countValues.filter((count) => count === 1).length,
+          revotedTieRequired: Boolean(voteResult.revotedTieRequired),
+          revotedTieSkipped: Boolean(voteResult.revotedTieSkipped),
+          eliminatedStudentId: eliminatedId,
+          eliminatedName: voteResult.eliminatedName || eliminated.name || "",
+          eliminatedRole: eliminated.role || "",
+          eliminatedTeam: eliminated.role === "mafia" ? "mafia" : "citizen",
+          aliveCountAfter: aliveSet.size
+        });
+      }
+    });
+
+  return events.sort((a, b) => a.timestamp - b.timestamp || a.round - b.round);
+}
+
+function getFirstEventTime(events, predicate) {
+  const event = events.find(predicate);
+  return event ? Number(event.timestamp || 0) : 0;
+}
+
+function getConsecutiveTopVoteMatchTime(events) {
+  const voteEvents = events.filter((event) => event.type === "VOTE_RESULT" && event.topVotedStudentId);
+  for (let index = 1; index < voteEvents.length; index += 1) {
+    if (voteEvents[index - 1].topVotedStudentId === voteEvents[index].topVotedStudentId) {
+      return Number(voteEvents[index].timestamp || 0);
+    }
+  }
+  return 0;
+}
+
+function getSameTargetVotedTwiceMatchTime(events) {
+  const voteEvents = events.filter((event) => event.type === "VOTE_RESULT");
+  for (let index = 1; index < voteEvents.length; index += 1) {
+    const previousIds = new Set(Object.keys(voteEvents[index - 1].voteCounts || {}));
+    const currentIds = Object.keys(voteEvents[index].voteCounts || {});
+    if (currentIds.some((id) => previousIds.has(id))) {
+      return Number(voteEvents[index].timestamp || 0);
+    }
+  }
+  return 0;
+}
+
+function getConsecutiveCitizenTeamDeathsMatchTime(events) {
+  const deathEvents = events.filter((event) => event.eliminatedStudentId);
+  for (let index = 1; index < deathEvents.length; index += 1) {
+    const previousCitizenTeamDeath = deathEvents[index - 1].eliminatedRole && deathEvents[index - 1].eliminatedRole !== "mafia";
+    const currentCitizenTeamDeath = deathEvents[index].eliminatedRole && deathEvents[index].eliminatedRole !== "mafia";
+    if (previousCitizenTeamDeath && currentCitizenTeamDeath) {
+      return Number(deathEvents[index].timestamp || 0);
+    }
+  }
+  return 0;
+}
+
+function getGhostBingoMatchesSince(confirmedAt) {
+  const events = getMafiaBingoEvents().filter((event) => Number(event.timestamp || 0) >= Number(confirmedAt || 0));
+  return GHOST_BINGO_CONDITIONS.reduce((matches, condition) => {
+    const matchedAt = Number(condition.matchAt(events) || 0);
+    if (matchedAt) {
+      matches[condition.id] = matchedAt;
+    }
+    return matches;
+  }, {});
+}
+
+function getGhostBingoComputedResult(ghost) {
+  const board = normalizeGhostBingoBoard(ghost.board);
+  const matches = getGhostBingoMatchesSince(ghost.confirmedAt);
+  const checked = { ...(ghost.checked || {}) };
+
+  board.forEach((conditionId, index) => {
+    if (index !== 4 && conditionId && matches[conditionId]) {
+      checked[conditionId] = true;
+    }
+  });
+
+  const lineTimes = getGhostBingoLineTimes(board, matches, ghost.confirmedAt);
+  return {
+    board,
+    checked,
+    bingoLines: lineTimes.length,
+    checkedCount: board.filter((conditionId, index) => index !== 4 && conditionId && checked[conditionId]).length,
+    firstBingoAt: Number(ghost.firstBingoAt || 0) || (lineTimes[0] || 0),
+    matches
+  };
+}
+
+function getGhostBingoLineTimes(board, matches, confirmedAt) {
+  const lines = [
+    [0, 1, 2],
+    [3, 4, 5],
+    [6, 7, 8],
+    [0, 3, 6],
+    [1, 4, 7],
+    [2, 5, 8],
+    [0, 4, 8],
+    [2, 4, 6]
+  ];
+
+  return lines
+    .map((line) => {
+      const times = line.map((index) => {
+        if (index === 4) {
+          return Number(confirmedAt || 0);
+        }
+        const conditionId = board[index];
+        return conditionId && matches[conditionId] ? Number(matches[conditionId]) : 0;
+      });
+      return times.every(Boolean) ? Math.max(...times) : 0;
+    })
+    .filter(Boolean)
+    .sort((a, b) => a - b);
+}
+
+function getGhostBingoRanking() {
+  return getMafiaGhosts()
+    .filter((ghost) => ghost.bingoConfirmed)
+    .map((ghost) => ({
+      ...ghost,
+      ...getGhostBingoComputedResult(ghost)
+    }))
+    .sort((a, b) => {
+      if (b.bingoLines !== a.bingoLines) {
+        return b.bingoLines - a.bingoLines;
+      }
+      if (b.checkedCount !== a.checkedCount) {
+        return b.checkedCount - a.checkedCount;
+      }
+      const aFirst = a.firstBingoAt || Number.MAX_SAFE_INTEGER;
+      const bFirst = b.firstBingoAt || Number.MAX_SAFE_INTEGER;
+      if (aFirst !== bFirst) {
+        return aFirst - bFirst;
+      }
+      return String(a.name).localeCompare(String(b.name), "ko");
+    });
+}
+
+function syncAllGhostBingoProgress() {
+  getMafiaGhosts()
+    .filter((ghost) => ghost.bingoConfirmed)
+    .forEach((ghost) => syncGhostBingoProgress(ghost));
+}
+
+async function syncGhostBingoProgress(ghost) {
+  if (!db || !ghost?.bingoConfirmed) {
+    return;
+  }
+
+  const result = getGhostBingoComputedResult(ghost);
+  const previousChecked = ghost.checked || {};
+  const changed = result.bingoLines !== ghost.bingoLines
+    || result.checkedCount !== ghost.checkedCount
+    || Object.keys(result.checked).some((id) => Boolean(result.checked[id]) !== Boolean(previousChecked[id]))
+    || (result.firstBingoAt && !ghost.firstBingoAt);
+
+  if (!changed) {
+    return;
+  }
+
+  const updates = {
+    checked: result.checked,
+    bingoLines: result.bingoLines,
+    checkedCount: result.checkedCount
+  };
+
+  if (result.firstBingoAt && !ghost.firstBingoAt) {
+    updates.firstBingoAt = result.firstBingoAt;
+  }
+
+  try {
+    await update(ref(db, `rooms/${state.roomCode}/mafia/ghosts/${ghost.id}`), updates);
+  } catch (error) {
+    console.error(error);
+  }
 }
 
 function projectMafiaPlayersAfterElimination(eliminatedStudentId) {
@@ -3699,9 +4550,169 @@ function renderMafiaVoteTeacherPanel(round) {
   `;
 }
 
+function renderGhostBingoBuilder(ghost) {
+  const draft = getGhostBingoDraft(ghost);
+  const selectedSet = new Set(draft.selectedIds);
+  const boardFilledCount = draft.board.filter((id, index) => index !== 4 && id).length;
+  const canConfirm = selectedSet.size === GHOST_BINGO_REQUIRED_CONDITIONS && boardFilledCount === GHOST_BINGO_REQUIRED_CONDITIONS;
+
+  return `
+    <div class="stack">
+      <div>
+        <h2>유령 빙고판 만들기</h2>
+        <p class="muted">빙고판을 완성한 이후 발생한 사건부터 자동 체크됩니다.</p>
+      </div>
+      <div class="notice info">
+        조건 선택 ${selectedSet.size} / ${GHOST_BINGO_REQUIRED_CONDITIONS} · 배치 ${boardFilledCount} / ${GHOST_BINGO_REQUIRED_CONDITIONS}
+      </div>
+      <div class="ghost-builder-grid">
+        <div class="stack">
+          <h3>내 빙고판</h3>
+          ${renderGhostBingoBoard(draft.board, null, true)}
+          <button class="btn success" data-action="ghost-confirm-bingo" type="button" ${canConfirm ? "" : "disabled"}>👻 이 빙고판으로 시작하기</button>
+        </div>
+        <div class="stack">
+          <h3>조건 후보</h3>
+          <div class="ghost-condition-grid">
+            ${GHOST_BINGO_CONDITIONS.map((condition) => {
+              const isSelected = selectedSet.has(condition.id);
+              const isPlacing = state.selectedGhostBingoConditionId === condition.id;
+              const disabled = !isSelected && selectedSet.size >= GHOST_BINGO_REQUIRED_CONDITIONS;
+              return `
+                <button class="ghost-condition-card ${isSelected ? "selected" : ""} ${isPlacing ? "placing" : ""}" data-ghost-condition="${escapeAttr(condition.id)}" type="button" ${disabled ? "disabled" : ""}>
+                  <strong>${escapeHtml(condition.label)}</strong>
+                  <span>${escapeHtml(condition.description)}</span>
+                </button>
+              `;
+            }).join("")}
+          </div>
+          <div class="notice info small">
+            조건을 누른 뒤 빙고 칸을 누르면 들어갑니다. 이미 놓인 조건끼리는 서로 바뀌고, 파란색으로 선택된 조건을 한 번 더 누르면 선택 해제됩니다.
+          </div>
+        </div>
+      </div>
+    </div>
+  `;
+}
+
+function renderGhostBingoLive(ghost) {
+  const result = getGhostBingoComputedResult(ghost);
+  const firstBingo = result.bingoLines > 0;
+
+  return `
+    <div class="stack">
+      <div>
+        <h2>유령 빙고</h2>
+        <p class="muted">확정 이후 실제 게임 기록으로 자동 체크됩니다.</p>
+      </div>
+      <div class="stats">
+        <div class="stat">
+          <span class="muted">현재 빙고</span>
+          <span class="num">${result.bingoLines}줄</span>
+        </div>
+        <div class="stat">
+          <span class="muted">완성 칸</span>
+          <span class="num">${result.checkedCount}/${GHOST_BINGO_REQUIRED_CONDITIONS}</span>
+        </div>
+        <div class="stat">
+          <span class="muted">첫 빙고</span>
+          <span class="num">${firstBingo ? "완성" : "대기"}</span>
+        </div>
+      </div>
+      ${firstBingo ? `<div class="notice success ghost-bingo-pop">👻 유령 빙고 완성! 저승에서도 당신은 살아 있습니다.</div>` : ""}
+      ${renderGhostBingoBoard(result.board, result, false)}
+      <div class="ghost-checked-list">
+        ${result.board.filter((id) => id && id !== GHOST_BINGO_FREE_ID).map((id) => {
+          const condition = getGhostBingoCondition(id);
+          const isChecked = Boolean(result.checked[id]);
+          return `
+            <div class="ghost-check-row ${isChecked ? "checked" : ""}">
+              <span>${isChecked ? "완료" : "대기"}</span>
+              <strong>${escapeHtml(condition?.label || "조건")}</strong>
+            </div>
+          `;
+        }).join("")}
+      </div>
+    </div>
+  `;
+}
+
+function renderGhostBingoBoard(board, result, interactive) {
+  const normalizedBoard = normalizeGhostBingoBoard(board);
+  return `
+    <div class="ghost-bingo-board">
+      ${normalizedBoard.map((conditionId, index) => {
+        const isFree = index === 4;
+        const condition = isFree ? null : getGhostBingoCondition(conditionId);
+        const isChecked = isFree || Boolean(result?.checked?.[conditionId]);
+        const isActive = state.selectedGhostBingoConditionId && state.selectedGhostBingoConditionId === conditionId;
+        const content = isFree
+          ? `<strong>👻 FREE</strong>`
+          : condition
+            ? `<strong>${escapeHtml(condition.label)}</strong><span>${escapeHtml(condition.description)}</span>`
+            : `<strong>비어 있음</strong><span>조건을 선택한 뒤 이 칸을 누르세요.</span>`;
+        const attrs = interactive && !isFree ? `data-ghost-cell="${index}" type="button"` : `type="button" disabled`;
+        return `
+          <button class="ghost-bingo-cell ${isFree ? "free" : ""} ${condition ? "filled" : "empty"} ${isChecked ? "checked" : ""} ${isActive ? "active" : ""}" ${attrs}>
+            ${content}
+          </button>
+        `;
+      }).join("")}
+    </div>
+  `;
+}
+
+function renderGhostBingoLeaderboard() {
+  const ranking = getGhostBingoRanking();
+  if (!ranking.length) {
+    return `<div class="empty">아직 확정한 유령 빙고판이 없습니다.</div>`;
+  }
+
+  return `
+    <div class="ranking ghost-ranking">
+      ${ranking.slice(0, 5).map((ghost, index) => `
+        <div class="ranking-row rank-${index + 1}">
+          <span class="rank-medal">${index + 1}</span>
+          <strong>${escapeHtml(ghost.name)}</strong>
+          <span class="score">${ghost.bingoLines}빙고 · ${ghost.checkedCount}칸</span>
+        </div>
+      `).join("")}
+    </div>
+  `;
+}
+
+function renderGhostChatPanel({ teacher = false, ghost = null, allowSend = false } = {}) {
+  const messages = getMafiaGhostChatMessages({ teacher, ghost });
+
+  return `
+    <div class="ghost-chat">
+      <div class="ghost-chat-list" id="ghostChatList">
+        ${messages.length ? messages.map((message) => `
+          <article class="ghost-chat-message ${message.messageType === "system" ? "system" : ""}">
+            <div class="ghost-chat-meta">
+              <strong>${message.messageType === "system" ? "시스템" : `${escapeHtml(message.playerName || "이름 없음")} 👻`}</strong>
+              <span>${formatClock(message.createdAt)}</span>
+            </div>
+            <p>${escapeHtml(message.content || "")}</p>
+          </article>
+        `).join("") : `<div class="empty">아직 유령 채팅이 없습니다.</div>`}
+      </div>
+      ${allowSend ? `
+        <div class="ghost-chat-form">
+          <input id="ghostChatInput" type="text" maxlength="${GHOST_CHAT_MAX_LENGTH}" placeholder="유령 채팅 입력" autocomplete="off" />
+          <button class="btn primary" id="ghostChatSendBtn" type="button">전송</button>
+        </div>
+        <p class="muted small">엔터로 전송할 수 있습니다. 최대 ${GHOST_CHAT_MAX_LENGTH}자입니다.</p>
+      ` : teacher ? `<p class="muted small">교사 화면에서는 전체 유령 채팅을 읽기 전용으로 확인합니다.</p>` : ""}
+    </div>
+  `;
+}
+
 function renderMafiaFinalResult(viewName, showTeacherControls, force = false) {
   const winner = getMafiaWinner();
   const players = getMafiaPlayers();
+  syncAllGhostBingoProgress();
+  const hasGhosts = getMafiaGhosts().length > 0;
 
   setView(viewName, `
     <section class="screen mafia-mode">
@@ -3724,10 +4735,25 @@ function renderMafiaFinalResult(viewName, showTeacherControls, force = false) {
         <h2>전체 역할표</h2>
         ${renderMafiaRoleTable(players)}
       </section>
+
+      ${hasGhosts ? `
+        <section class="panel">
+          <h2>👻 저승 빙고 결과</h2>
+          ${renderGhostBingoLeaderboard()}
+        </section>
+      ` : ""}
+
+      ${showTeacherControls && hasGhosts ? `
+        <section class="panel">
+          <h2>유령 채팅 기록</h2>
+          ${renderGhostChatPanel({ teacher: true, allowSend: false })}
+        </section>
+      ` : ""}
     </section>
   `, () => {
     document.querySelector("[data-action='reset']")?.addEventListener("click", resetGame);
     document.querySelector("[data-action='clear-room']")?.addEventListener("click", clearRoomLists);
+    scrollGhostChatToBottom();
   }, force);
 }
 
@@ -4245,6 +5271,17 @@ function formatTime(value) {
     return "-";
   }
   return `${Number(value).toFixed(1)}초`;
+}
+
+function formatClock(value) {
+  const timestamp = Number(value || 0);
+  if (!timestamp) {
+    return "-";
+  }
+  return new Date(timestamp).toLocaleTimeString("ko-KR", {
+    hour: "2-digit",
+    minute: "2-digit"
+  });
 }
 
 function escapeHtml(value) {
