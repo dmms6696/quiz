@@ -194,6 +194,7 @@ const GHOST_BINGO_CONDITIONS = [
 
 let firebaseApp = null;
 let db = null;
+let displayWindow = null;
 
 const state = {
   role: null,
@@ -221,11 +222,53 @@ if (isFirebaseConfigured()) {
   db = getDatabase(firebaseApp);
 }
 
-renderHome();
+bootApp();
 
 // =========================
 // 화면 렌더링
 // =========================
+
+function bootApp() {
+  const params = new URLSearchParams(window.location.search);
+  const isDisplay = params.get("display") === "1";
+  const displayRoomCode = normalizeRoomCode(params.get("room") || "");
+
+  if (isDisplay && displayRoomCode) {
+    enterDisplayMode(displayRoomCode);
+    return;
+  }
+
+  renderHome();
+}
+
+function enterDisplayMode(roomCode) {
+  state.role = "display";
+  state.roomCode = roomCode;
+  state.activeView = "";
+
+  if (!db) {
+    setView("display-no-firebase", `
+      <section class="screen display-stage">
+        <div class="panel">
+          <h1>Firebase 설정값이 필요합니다.</h1>
+          <p class="lead">교실 화면을 열려면 app.js의 Firebase 설정이 먼저 입력되어 있어야 합니다.</p>
+        </div>
+      </section>
+    `, null, true);
+    return;
+  }
+
+  setView("display-loading", `
+    <section class="screen display-stage">
+      <div class="panel">
+        <p class="eyebrow">동명중학교 PLAYGROUND</p>
+        <h1>교실 화면을 불러오는 중입니다.</h1>
+        <p class="lead">방 코드 ${escapeHtml(roomCode)}</p>
+      </div>
+    </section>
+  `, null, true);
+  subscribeToRoom(roomCode);
+}
 
 function renderHome() {
   clearRoomSubscription();
@@ -1368,6 +1411,293 @@ function renderStudentResult(force = false) {
   `, null, force);
 }
 
+function renderDisplayRoute(force = false) {
+  if (!state.room) {
+    setView("display-loading-room", `
+      <section class="screen display-stage">
+        <div class="panel">
+          <h1>방 정보를 불러오는 중입니다.</h1>
+          <p class="lead">방 코드 ${escapeHtml(state.roomCode)}</p>
+        </div>
+      </section>
+    `, null, force);
+    return;
+  }
+
+  if (getRoomMode() === "compliment") {
+    renderComplimentDisplay(force);
+    return;
+  }
+
+  if (getRoomMode() === "mafia") {
+    renderMafiaDisplay(force);
+    return;
+  }
+
+  renderQuizDisplay(force);
+}
+
+function renderDisplayShell(viewName, title, subtitle, bodyHtml, afterRender = null, force = false) {
+  const modeClass = getRoomMode() === "compliment" ? "compliment-mode" : getRoomMode() === "mafia" ? "mafia-mode" : "";
+  setView(viewName, `
+    <section class="screen display-stage ${modeClass}">
+      <div class="display-header">
+        <div>
+          <p class="eyebrow">동명중학교 PLAYGROUND · 방 코드 ${escapeHtml(state.roomCode)}</p>
+          <h1>${escapeHtml(title)}</h1>
+          ${subtitle ? `<p class="lead">${escapeHtml(subtitle)}</p>` : ""}
+        </div>
+        <span class="pill ${statusPillClass(state.room?.status || "waiting")}">${statusLabel(state.room?.status || "waiting")}</span>
+      </div>
+      ${bodyHtml}
+    </section>
+  `, afterRender, force);
+}
+
+function renderQuizDisplay(force = false) {
+  const questions = getQuestions();
+  const students = getStudents();
+  const status = state.room.status || "waiting";
+  const currentIndex = Number(state.room.currentQuestionIndex ?? -1);
+  const currentQuestion = questions[currentIndex];
+  const viewName = `display-quiz-${status}-${currentQuestion?.id || "none"}`;
+
+  if (status === "finished") {
+    renderDisplayShell(viewName, "최종 결과", "전체 누적 랭킹을 확인합니다.", `
+      <section class="panel">
+        <h2>최종 순위</h2>
+        <div class="final-podium">
+          ${renderPodium(getCumulativeRanking()[1], 2, "second")}
+          ${renderPodium(getCumulativeRanking()[0], 1, "first")}
+          ${renderPodium(getCumulativeRanking()[2], 3, "third")}
+        </div>
+      </section>
+      <section class="panel">
+        <h2>전체 랭킹</h2>
+        ${renderRanking(getCumulativeRanking())}
+      </section>
+    `, null, force);
+    return;
+  }
+
+  if ((status === "playing" || status === "result") && currentQuestion) {
+    renderDisplayShell(viewName, "자기소개 퀴즈 배틀", `${currentIndex + 1} / ${questions.length}번째 문제`, `
+      <section class="panel display-main-panel">
+        ${renderTeacherCurrentQuestion(currentQuestion, currentIndex, questions.length, status)}
+      </section>
+      ${status === "result" ? `
+        <section class="panel">
+          <h2>현재 누적 랭킹</h2>
+          ${renderRanking(getCumulativeRanking().slice(0, 8))}
+        </section>
+      ` : `<div class="notice info">학생들은 각자 패드에서 답을 선택합니다.</div>`}
+    `, () => {
+      if (status === "playing") {
+        startTimer({
+          startedAt: state.room.questionStartedAt,
+          limit: state.room.timeLimit || DEFAULT_TIME_LIMIT_SECONDS,
+          textSelector: "#teacherTimerText",
+          fillSelector: "#teacherTimerFill"
+        });
+      }
+    }, force);
+    return;
+  }
+
+  renderDisplayShell(viewName, "자기소개 퀴즈 배틀", "학생들이 문제를 제출하는 중입니다.", `
+    <div class="panel">
+      <div class="stats">
+        <div class="stat">
+          <span class="muted">제출 문제</span>
+          <span class="num">${questions.length}</span>
+        </div>
+        <div class="stat">
+          <span class="muted">참여 학생</span>
+          <span class="num">${students.length}</span>
+        </div>
+        <div class="stat">
+          <span class="muted">접속 학생</span>
+          <span class="num">${students.filter((student) => student.connected).length}</span>
+        </div>
+      </div>
+    </div>
+  `, null, force);
+}
+
+function renderComplimentDisplay(force = false) {
+  const compliments = getCompliments();
+  const students = getStudents();
+  const status = state.room.status || "waiting";
+  const currentIndex = Number(state.room.currentComplimentIndex ?? -1);
+  const currentCompliment = compliments[currentIndex];
+  const viewName = `display-compliment-${status}-${currentCompliment?.id || "none"}-${state.room.currentClueIndex || 0}`;
+
+  if (status === "finished") {
+    renderDisplayShell(viewName, "최종 결과", "전체 누적 랭킹을 확인합니다.", `
+      <section class="panel">
+        <h2>전체 랭킹</h2>
+        ${renderRanking(getCumulativeRanking())}
+      </section>
+    `, null, force);
+    return;
+  }
+
+  if (currentCompliment && ["playing", "targetReveal", "authorGuess", "authorReveal"].includes(status)) {
+    const clueIndex = Number(state.room.currentClueIndex || 0);
+    const clues = normalizeComplimentClues(currentCompliment.clues);
+    const visibleClues = status === "playing" ? clues.slice(0, clueIndex + 1) : clues;
+    const targetVisible = ["targetReveal", "authorGuess", "authorReveal"].includes(status);
+    const authorVisible = status === "authorReveal";
+
+    renderDisplayShell(viewName, "칭찬 스무고개", `${currentIndex + 1} / ${compliments.length}번째 칭찬 카드`, `
+      <section class="panel warm-panel display-main-panel">
+        <div class="grid-2">
+          <div>
+            <p class="muted small">칭찬 대상</p>
+            <h2>${targetVisible ? escapeHtml(currentCompliment.targetName) : "아직 비공개"}</h2>
+          </div>
+          <div>
+            <p class="muted small">칭찬 작성자</p>
+            <h2>${authorVisible ? escapeHtml(currentCompliment.authorName) : "아직 비공개"}</h2>
+          </div>
+        </div>
+        ${renderComplimentClueCards(visibleClues)}
+      </section>
+      ${status === "authorReveal" ? `
+        <section class="panel">
+          <h2>이번 카드 결과</h2>
+          ${renderComplimentScoreEvents(currentCompliment)}
+        </section>
+      ` : `<div class="notice info">학생들은 각자 패드에서 추리합니다.</div>`}
+    `, null, force);
+    return;
+  }
+
+  renderDisplayShell(viewName, "칭찬 스무고개", "학생들이 칭찬 카드를 제출하는 중입니다.", `
+    <div class="panel warm-panel">
+      <div class="stats">
+        <div class="stat">
+          <span class="muted">칭찬 카드</span>
+          <span class="num">${compliments.length}</span>
+        </div>
+        <div class="stat">
+          <span class="muted">참여 학생</span>
+          <span class="num">${students.length}</span>
+        </div>
+        <div class="stat">
+          <span class="muted">접속 학생</span>
+          <span class="num">${students.filter((student) => student.connected).length}</span>
+        </div>
+      </div>
+    </div>
+  `, null, force);
+}
+
+function renderMafiaDisplay(force = false) {
+  const status = state.room.status || "waiting";
+  const players = getMafiaPlayers();
+  const alivePlayers = players.filter((player) => player.alive);
+  const round = getCurrentMafiaRound();
+  const viewName = `display-mafia-${status}-${getMafiaRoundNumber()}`;
+  const winner = getMafiaWinner();
+  let bodyHtml = "";
+
+  if (status === "finished") {
+    bodyHtml = `
+      <section class="panel mafia-panel result-panel">
+        <h1>${winner ? mafiaWinnerText(winner) : "게임이 종료되었습니다."}</h1>
+      </section>
+      <section class="panel">
+        <h2>전체 역할표</h2>
+        ${renderMafiaRoleTable(players)}
+      </section>
+    `;
+  } else if (status === "nightAction") {
+    const completed = alivePlayers.filter((player) => getMafiaNightAction(player.id, player.role)).length;
+    bodyHtml = `
+      <section class="panel mafia-panel result-panel">
+        <span class="pill red">${getMafiaRoundNumber()}번째 밤</span>
+        <h1>밤 행동 진행 중</h1>
+        <p class="lead">생존자들이 각자 패드에서 선택하고 있습니다.</p>
+        <div class="stats">
+          <div class="stat"><span class="muted">밤 행동 완료</span><span class="num">${completed}/${alivePlayers.length}</span></div>
+          <div class="stat"><span class="muted">생존자</span><span class="num">${alivePlayers.length}</span></div>
+        </div>
+      </section>
+    `;
+  } else if (status === "nightResult") {
+    const result = round.nightResult || {};
+    const message = result.savedByDoctor
+      ? "지난밤 마피아의 공격이 있었지만 아무도 탈락하지 않았습니다."
+      : result.eliminatedName
+        ? `지난밤 ${escapeHtml(result.eliminatedName)}이/가 탈락했습니다.`
+        : "지난밤 아무도 탈락하지 않았습니다.";
+    bodyHtml = `<section class="panel mafia-panel result-panel"><span class="pill gold">낮 결과 발표</span><h1>${message}</h1></section>`;
+  } else if (status === "discussion") {
+    bodyHtml = `
+      <section class="panel mafia-panel result-panel">
+        <span class="pill blue">낮 토론</span>
+        <h1>낮 토론 시간입니다.</h1>
+        <div class="timer-wrap">
+          <div class="timer-top">
+            <span>토론 남은 시간</span>
+            <span id="displayMafiaDiscussionText">${getMafiaSettings().discussionSeconds}초</span>
+          </div>
+          <div class="timer-track"><div id="displayMafiaDiscussionFill" class="timer-fill"></div></div>
+        </div>
+      </section>
+    `;
+  } else if (status === "voting") {
+    const voteCount = Object.keys(round.votes || {}).length;
+    bodyHtml = `
+      <section class="panel mafia-panel result-panel">
+        <span class="pill green">비밀 투표</span>
+        <h1>투표 진행 중</h1>
+        <div class="stats">
+          <div class="stat"><span class="muted">투표 완료</span><span class="num">${voteCount}/${alivePlayers.length}</span></div>
+          <div class="stat"><span class="muted">생존자</span><span class="num">${alivePlayers.length}</span></div>
+        </div>
+      </section>
+    `;
+  } else if (status === "voteResult") {
+    const result = round.voteResult || {};
+    const title = result.revotedTieSkipped
+      ? "재투표도 동점이라 아무도 탈락하지 않았습니다."
+      : result.revotedTieRequired
+        ? "동점입니다. 재투표가 필요합니다."
+        : result.eliminatedName
+          ? `이번 투표에서 ${escapeHtml(result.eliminatedName)}이/가 최종 지목되었습니다.`
+          : "이번 투표에서는 아무도 탈락하지 않았습니다.";
+    bodyHtml = `<section class="panel mafia-panel result-panel"><span class="pill gold">투표 결과</span><h1>${title}</h1></section>`;
+  } else if (status === "roleRevealDead") {
+    const elimination = getLastMafiaElimination();
+    const roleText = elimination?.role ? publicMafiaRoleLabel(elimination.role) : "알 수 없음";
+    bodyHtml = `<section class="panel mafia-panel result-panel"><span class="pill red">정체 공개</span><h1>${elimination?.name ? `${escapeHtml(elimination.name)}의 정체는 ${roleText}였습니다.` : "공개할 정체가 없습니다."}</h1></section>`;
+  } else {
+    bodyHtml = `
+      <section class="panel mafia-panel result-panel">
+        <span class="pill red">${getMafiaRoundNumber()}라운드</span>
+        <h1>${status === "roleAssigned" || status === "roleReveal" ? "역할 확인 시간입니다." : "교실 마피아 게임을 준비 중입니다."}</h1>
+        <div class="stats">
+          <div class="stat"><span class="muted">전체 학생</span><span class="num">${players.length || getStudents().length}</span></div>
+          <div class="stat"><span class="muted">생존자</span><span class="num">${alivePlayers.length || getStudents().length}</span></div>
+        </div>
+      </section>
+    `;
+  }
+
+  renderDisplayShell(viewName, "교실 마피아 게임", `${getMafiaRoundNumber()}라운드`, bodyHtml, () => {
+    if (status === "discussion") {
+      startTimer({
+        startedAt: getMafiaState().discussionStartedAt,
+        limit: getMafiaSettings().discussionSeconds,
+        textSelector: "#displayMafiaDiscussionText",
+        fillSelector: "#displayMafiaDiscussionFill"
+      });
+    }
+  }, force);
+}
+
 function renderTeacherDashboard(force = true) {
   if (!state.room) {
     setView("teacher-loading", `<section class="screen"><div class="panel"><h2>방 정보를 불러오는 중입니다.</h2></div></section>`);
@@ -1411,6 +1741,7 @@ function renderTeacherDashboard(force = true) {
           <div class="button-row">
             <span class="pill ${statusPillClass(status)}">${statusLabel(status)}</span>
             <button class="btn ghost" id="copyRoomCodeBtn" type="button">방 코드 복사</button>
+            <button class="btn dark" data-action="open-display" type="button">교실 화면 팝업</button>
           </div>
         </div>
 
@@ -1496,6 +1827,9 @@ function renderTeacherDashboard(force = true) {
     document.querySelectorAll("[data-delete-question]").forEach((button) => {
       button.addEventListener("click", () => deleteQuestion(button.dataset.deleteQuestion));
     });
+    document.querySelectorAll("[data-view-question]").forEach((button) => {
+      button.addEventListener("click", () => showTeacherQuestionDetail(button.dataset.viewQuestion));
+    });
     if (currentQuestion && status === "playing") {
       startTimer({
         startedAt: state.room.questionStartedAt,
@@ -1540,6 +1874,7 @@ function renderComplimentTeacherDashboard(force = true) {
           <div class="button-row">
             <span class="pill ${statusPillClass(status)}">${statusLabel(status)}</span>
             <button class="btn ghost" id="copyRoomCodeBtn" type="button">방 코드 복사</button>
+            <button class="btn dark" data-action="open-display" type="button">교실 화면 팝업</button>
           </div>
         </div>
 
@@ -1665,6 +2000,7 @@ function renderMafiaTeacherDashboard(force = true) {
             <span class="pill ${statusPillClass(status)}">${statusLabel(status)}</span>
             <span class="pill red">${mafia.round || 1}라운드</span>
             <button class="btn ghost" id="copyRoomCodeBtn" type="button">방 코드 복사</button>
+            <button class="btn dark" data-action="open-display" type="button">교실 화면 팝업</button>
           </div>
         </div>
 
@@ -2429,6 +2765,7 @@ function handleTeacherAction(action) {
     finish: finishGame,
     reset: resetGame,
     "clear-room": clearRoomLists,
+    "open-display": () => openDisplayWindow(),
     "start-compliment": startComplimentGame,
     "save-compliment-settings": saveComplimentSettings,
     "compliment-next-clue": showNextComplimentClue,
@@ -2458,6 +2795,8 @@ async function startGame() {
     showToast("시작할 문제가 없습니다.", "error");
     return;
   }
+
+  openDisplayWindow();
 
   const questionOrder = shuffleArray(questions.map((question) => question.id));
   const updates = {
@@ -2489,6 +2828,8 @@ async function startComplimentGame() {
     showToast("시작할 칭찬 카드가 없습니다.", "error");
     return;
   }
+
+  openDisplayWindow();
 
   const complimentOrder = shuffleArray(compliments.map((compliment) => compliment.id));
   const updates = {
@@ -2688,6 +3029,8 @@ async function assignMafiaRoles() {
     return;
   }
 
+  openDisplayWindow();
+
   const roleDeck = [
     ...Array(settings.mafiaCount).fill("mafia"),
     ...Array(settings.policeCount).fill("police"),
@@ -2736,6 +3079,8 @@ async function startMafiaRoleReveal() {
     showToast("먼저 역할을 배정해 주세요.", "error");
     return;
   }
+
+  openDisplayWindow();
 
   try {
     await update(roomRef(state.roomCode), { status: "roleReveal" });
@@ -3162,6 +3507,46 @@ async function copyRoomCode() {
   }
 }
 
+function openDisplayWindow({ silent = false } = {}) {
+  if (!state.roomCode) {
+    if (!silent) {
+      showToast("방 코드가 있어야 교실 화면을 열 수 있습니다.", "error");
+    }
+    return null;
+  }
+
+  if (displayWindow && !displayWindow.closed) {
+    displayWindow.focus();
+    if (!silent) {
+      showToast("이미 열린 교실 화면을 앞으로 가져왔습니다.", "success");
+    }
+    return displayWindow;
+  }
+
+  const url = new URL(window.location.href);
+  url.search = "";
+  url.hash = "";
+  url.searchParams.set("display", "1");
+  url.searchParams.set("room", state.roomCode);
+
+  displayWindow = window.open(
+    url.toString(),
+    `dm_playground_display_${state.roomCode}`,
+    "popup=yes,width=1280,height=800,left=80,top=60"
+  );
+
+  if (displayWindow) {
+    displayWindow.focus();
+    if (!silent) {
+      showToast("교실 화면 팝업을 열었습니다. 확장 모니터로 옮겨 주세요.", "success");
+    }
+  } else if (!silent) {
+    showToast("팝업이 차단되었습니다. 브라우저에서 팝업 허용 후 다시 눌러 주세요.", "error");
+  }
+
+  return displayWindow;
+}
+
 // =========================
 // 구독 및 데이터 도우미
 // =========================
@@ -3172,6 +3557,10 @@ function subscribeToRoom(code) {
 
   state.unsubscribeRoom = onValue(roomRef(code), (snapshot) => {
     state.room = snapshot.val();
+    if (state.role === "display") {
+      renderDisplayRoute(true);
+      return;
+    }
     if (state.role === "teacher") {
       if (state.room?.status === "finished") {
         if (getRoomMode() === "mafia") {
@@ -5038,16 +5427,68 @@ function renderTeacherQuestionList(questions, status) {
     <ul class="list">
       ${questions.map((question, index) => `
         <li class="list-row split">
-          <div>
+          <button class="question-list-preview" data-view-question="${escapeAttr(question.id)}" type="button">
             <p class="muted small">${index + 1}. ${escapeHtml(question.authorName || "익명")}</p>
             <strong>${escapeHtml(question.question)}</strong>
             <p class="muted small">정답: ${question.correctIndex + 1}. ${escapeHtml(normalizeChoices(question.choices)[question.correctIndex] || "")}</p>
-          </div>
+            <span class="muted small">클릭해서 전체 보기</span>
+          </button>
           <button class="btn danger" data-delete-question="${escapeAttr(question.id)}" type="button" ${status === "waiting" ? "" : "disabled"}>삭제</button>
         </li>
       `).join("")}
     </ul>
   `;
+}
+
+function showTeacherQuestionDetail(questionId) {
+  const question = getQuestions().find((item) => item.id === questionId);
+  if (!question) {
+    showToast("문제를 찾지 못했습니다.", "error");
+    return;
+  }
+
+  closeTeacherQuestionDetail();
+  const choices = normalizeChoices(question.choices);
+  document.body.insertAdjacentHTML("beforeend", `
+    <div class="modal-backdrop" data-question-modal>
+      <section class="modal-panel">
+        <div class="status-bar">
+          <div>
+            <p class="eyebrow">제출 문제 전체 보기</p>
+            <h2>${escapeHtml(question.authorName || "익명")}의 문제</h2>
+          </div>
+          <button class="btn ghost" data-close-question-modal type="button">닫기</button>
+        </div>
+
+        <div class="question-detail">
+          <div>
+            <p class="muted small">문제</p>
+            <h3>${escapeHtml(question.question)}</h3>
+          </div>
+          <ol class="list">
+            ${choices.map((choice, index) => `
+              <li class="list-row split">
+                <strong>${index + 1}. ${escapeHtml(choice)}</strong>
+                ${index === question.correctIndex ? `<span class="pill green">정답</span>` : ""}
+              </li>
+            `).join("")}
+          </ol>
+        </div>
+      </section>
+    </div>
+  `);
+
+  const modal = document.querySelector("[data-question-modal]");
+  modal?.addEventListener("click", (event) => {
+    if (event.target === modal) {
+      closeTeacherQuestionDetail();
+    }
+  });
+  document.querySelector("[data-close-question-modal]")?.addEventListener("click", closeTeacherQuestionDetail);
+}
+
+function closeTeacherQuestionDetail() {
+  document.querySelector("[data-question-modal]")?.remove();
 }
 
 function renderStudentList(students) {
