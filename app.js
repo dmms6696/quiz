@@ -35,10 +35,10 @@ const TEACHER_PASSWORD = "0221";
 // 문제당 제한 시간입니다.
 const DEFAULT_TIME_LIMIT_SECONDS = 20;
 
-// 학생 한 명이 제출할 수 있는 최대 문제 수입니다.
+// 학생 한 명이 제출할 수 있는 기본 최대 문제 수입니다. 교사 화면에서 방마다 바꿀 수 있습니다.
 const MAX_QUESTIONS_PER_STUDENT = 3;
 
-// 학생 한 명이 제출할 수 있는 최대 칭찬 카드 수입니다.
+// 학생 한 명이 제출할 수 있는 기본 최대 칭찬 카드 수입니다. 교사 화면에서 방마다 바꿀 수 있습니다.
 const MAX_COMPLIMENTS_PER_STUDENT = 3;
 
 // 칭찬 스무고개 점수 설정입니다. 단서가 4개인 카드는 앞 4개 점수만 사용합니다.
@@ -240,9 +240,9 @@ function renderHome() {
   appEl.innerHTML = `
     <section class="screen">
       <div class="hero">
-        <p class="eyebrow">실시간 학급 참여 퀴즈</p>
-        <h1>우리 반 퀴즈 배틀</h1>
-        <p class="lead">자기소개 퀴즈, 칭찬 스무고개, 교실 마피아를 한 방 코드로 진행하는 실시간 학급 게임입니다.</p>
+        <p class="eyebrow">동명중학교</p>
+        <h1>동명중학교 PLAYGROUND</h1>
+        <p class="lead">퀴즈, 칭찬, 추리, 게임이 모이는 우리 학교 플레이 공간</p>
       </div>
 
       ${db ? "" : `
@@ -452,7 +452,8 @@ function renderStudentWaiting(force = false) {
   const students = getStudents();
   const connectedCount = students.filter((student) => student.connected).length;
   const ownQuestions = findQuestionsByAuthor(state.studentName);
-  const canAddMoreQuestions = ownQuestions.length < MAX_QUESTIONS_PER_STUDENT;
+  const maxQuestions = getMaxQuestionsPerStudent();
+  const canAddMoreQuestions = ownQuestions.length < maxQuestions;
 
   setView("student-waiting", `
     <section class="screen">
@@ -483,7 +484,7 @@ function renderStudentWaiting(force = false) {
           <div class="status-bar">
             <div>
               <h3>내가 제출한 문제</h3>
-              <p class="muted small">${ownQuestions.length} / ${MAX_QUESTIONS_PER_STUDENT}개 제출</p>
+              <p class="muted small">${ownQuestions.length} / ${maxQuestions}개 제출</p>
             </div>
             <button class="btn primary" id="addQuestionBtn" type="button" ${canAddMoreQuestions ? "" : "disabled"}>문제 추가</button>
           </div>
@@ -588,7 +589,7 @@ function renderComplimentForm(existingCompliment = null) {
           <div class="notice info">
             친절하다, 말을 잘 들어준다, 맡은 일을 잘한다, 분위기를 밝게 만든다, 노력하는 모습이 좋다, 친구를 잘 챙긴다, 수업에 열심히 참여한다 등
           </div>
-          <p class="muted small">한 학생은 최대 3개의 칭찬 카드를 제출할 수 있고, 같은 친구를 여러 번 선택하지 않는 것을 권장합니다.</p>
+          <p class="muted small">한 학생은 최대 ${getMaxComplimentsPerStudent()}개의 칭찬 카드를 제출할 수 있고, 같은 친구를 여러 번 선택하지 않는 것을 권장합니다.</p>
         </aside>
 
         <form id="complimentForm" class="panel">
@@ -634,7 +635,8 @@ function renderComplimentWaiting(force = false) {
   const students = getStudents();
   const connectedCount = students.filter((student) => student.connected).length;
   const ownCompliments = findComplimentsByAuthor(state.studentId);
-  const canAddMoreCompliments = ownCompliments.length < MAX_COMPLIMENTS_PER_STUDENT && getComplimentTargetOptions().length > 0;
+  const maxCompliments = getMaxComplimentsPerStudent();
+  const canAddMoreCompliments = ownCompliments.length < maxCompliments && getComplimentTargetOptions().length > 0;
 
   setView("compliment-waiting", `
     <section class="screen compliment-mode">
@@ -666,7 +668,7 @@ function renderComplimentWaiting(force = false) {
           <div class="status-bar">
             <div>
               <h3>내가 작성한 칭찬 카드</h3>
-              <p class="muted small">${ownCompliments.length} / ${MAX_COMPLIMENTS_PER_STUDENT}개 제출</p>
+              <p class="muted small">${ownCompliments.length} / ${maxCompliments}개 제출</p>
             </div>
             <button class="btn primary" id="addComplimentBtn" type="button" ${canAddMoreCompliments ? "" : "disabled"}>칭찬 카드 추가</button>
           </div>
@@ -1388,13 +1390,14 @@ function renderTeacherDashboard(force = true) {
   const status = state.room.status || "waiting";
   const currentIndex = Number(state.room.currentQuestionIndex ?? -1);
   const currentQuestion = questions[currentIndex];
+  const maxQuestions = getMaxQuestionsPerStudent();
 
   setView("teacher-dashboard", `
     <section class="screen">
       <div class="status-bar">
         <div>
           <p class="eyebrow">교사 화면</p>
-          <h1>우리 반 퀴즈 배틀</h1>
+          <h1>동명중학교 PLAYGROUND</h1>
         </div>
         <button class="btn ghost" id="backHomeBtn" type="button">처음으로</button>
       </div>
@@ -1430,6 +1433,17 @@ function renderTeacherDashboard(force = true) {
       <div class="teacher-grid">
         <aside class="panel">
           ${renderTeacherModeControls()}
+
+          <section class="panel tight">
+            <h2>제출 설정</h2>
+            <div class="field">
+              <label for="maxQuestionsInput">학생 1명당 최대 문제 수</label>
+              <input id="maxQuestionsInput" type="number" min="1" max="10" value="${maxQuestions}" />
+            </div>
+            <button class="btn primary" data-action="save-quiz-settings" type="button">설정 저장</button>
+            <p class="muted small">이미 제출된 문제는 지우지 않고, 새로 추가할 수 있는 개수만 조정합니다.</p>
+          </section>
+
           <h2>진행 controls</h2>
           <div class="button-row">
             <button class="btn primary" data-action="start" type="button" ${questions.length ? "" : "disabled"}>게임 시작</button>
@@ -1505,6 +1519,7 @@ function renderComplimentTeacherDashboard(force = true) {
   const status = state.room.status || "waiting";
   const currentIndex = Number(state.room.currentComplimentIndex ?? -1);
   const currentCompliment = compliments[currentIndex];
+  const maxCompliments = getMaxComplimentsPerStudent();
 
   setView("teacher-compliment-dashboard", `
     <section class="screen compliment-mode">
@@ -1547,6 +1562,17 @@ function renderComplimentTeacherDashboard(force = true) {
       <div class="teacher-grid">
         <aside class="panel">
           ${renderTeacherModeControls()}
+
+          <section class="panel tight">
+            <h2>제출 설정</h2>
+            <div class="field">
+              <label for="maxComplimentsInput">학생 1명당 최대 칭찬 카드 수</label>
+              <input id="maxComplimentsInput" type="number" min="1" max="10" value="${maxCompliments}" />
+            </div>
+            <button class="btn primary" data-action="save-compliment-settings" type="button">설정 저장</button>
+            <p class="muted small">같은 친구를 여러 번 선택하는 것은 계속 막습니다. 실제 추가 가능 수는 입장한 친구 수의 영향도 받습니다.</p>
+          </section>
+
           <h2>진행 controls</h2>
           <div class="button-row">
             <button class="btn primary" data-action="start-compliment" type="button" ${compliments.length ? "" : "disabled"}>게임 시작</button>
@@ -1891,6 +1917,8 @@ async function enterTeacher() {
         currentComplimentIndex: -1,
         currentClueIndex: 0,
         timeLimit: DEFAULT_TIME_LIMIT_SECONDS,
+        maxQuestionsPerStudent: MAX_QUESTIONS_PER_STUDENT,
+        maxComplimentsPerStudent: MAX_COMPLIMENTS_PER_STUDENT,
         createdAt: serverTimestamp(),
         students: {},
         questions: {},
@@ -1967,14 +1995,15 @@ async function submitQuestion(event) {
       : null;
     const ownQuestionsForName = findQuestionsByAuthor(name);
     const ownQuestionsExcludingCurrent = ownQuestionsForName.filter((item) => item.id !== editingQuestionId);
+    const maxQuestions = getMaxQuestionsPerStudent();
 
     if (editingQuestionId && !editingQuestion) {
       showToast("수정할 문제를 찾지 못했습니다. 대기 화면에서 다시 선택해 주세요.", "error");
       return;
     }
 
-    if (ownQuestionsExcludingCurrent.length >= MAX_QUESTIONS_PER_STUDENT) {
-      showToast(`한 학생은 문제를 최대 ${MAX_QUESTIONS_PER_STUDENT}개까지 제출할 수 있습니다.`, "error");
+    if (!editingQuestionId && ownQuestionsExcludingCurrent.length >= maxQuestions) {
+      showToast(`한 학생은 문제를 최대 ${maxQuestions}개까지 제출할 수 있습니다.`, "error");
       return;
     }
 
@@ -2065,9 +2094,10 @@ async function submitCompliment(event) {
   try {
     const ownCompliments = findComplimentsByAuthor(state.studentId);
     const ownComplimentsExcludingCurrent = ownCompliments.filter((item) => item.id !== editingComplimentId);
+    const maxCompliments = getMaxComplimentsPerStudent();
 
-    if (ownComplimentsExcludingCurrent.length >= MAX_COMPLIMENTS_PER_STUDENT) {
-      showToast(`한 학생은 칭찬 카드를 최대 ${MAX_COMPLIMENTS_PER_STUDENT}개까지 제출할 수 있습니다.`, "error");
+    if (!editingComplimentId && ownComplimentsExcludingCurrent.length >= maxCompliments) {
+      showToast(`한 학생은 칭찬 카드를 최대 ${maxCompliments}개까지 제출할 수 있습니다.`, "error");
       return;
     }
 
@@ -2392,6 +2422,7 @@ async function ensureOwnQuestionSkipped(question) {
 function handleTeacherAction(action) {
   const actions = {
     start: startGame,
+    "save-quiz-settings": saveQuizSettings,
     "restart-current": restartCurrentQuestion,
     reveal: () => revealAnswer(false),
     next: nextQuestion,
@@ -2399,6 +2430,7 @@ function handleTeacherAction(action) {
     reset: resetGame,
     "clear-room": clearRoomLists,
     "start-compliment": startComplimentGame,
+    "save-compliment-settings": saveComplimentSettings,
     "compliment-next-clue": showNextComplimentClue,
     "compliment-reveal-target": revealComplimentTarget,
     "compliment-author-guess": startComplimentAuthorGuess,
@@ -2579,6 +2611,34 @@ async function nextComplimentCard() {
   } catch (error) {
     console.error(error);
     showToast("다음 칭찬 카드로 이동하지 못했습니다.", "error");
+  }
+}
+
+async function saveQuizSettings() {
+  const value = clampInt(document.querySelector("#maxQuestionsInput")?.value, 1, 10, getMaxQuestionsPerStudent());
+
+  try {
+    await update(roomRef(state.roomCode), {
+      maxQuestionsPerStudent: value
+    });
+    showToast(`학생 1명당 문제 수를 최대 ${value}개로 저장했습니다.`, "success");
+  } catch (error) {
+    console.error(error);
+    showToast("자기소개 퀴즈 설정을 저장하지 못했습니다.", "error");
+  }
+}
+
+async function saveComplimentSettings() {
+  const value = clampInt(document.querySelector("#maxComplimentsInput")?.value, 1, 10, getMaxComplimentsPerStudent());
+
+  try {
+    await update(roomRef(state.roomCode), {
+      maxComplimentsPerStudent: value
+    });
+    showToast(`학생 1명당 칭찬 카드 수를 최대 ${value}개로 저장했습니다.`, "success");
+  } catch (error) {
+    console.error(error);
+    showToast("칭찬 스무고개 설정을 저장하지 못했습니다.", "error");
   }
 }
 
@@ -3446,9 +3506,17 @@ function findQuestionsByAuthor(name) {
   });
 }
 
+function getMaxQuestionsPerStudent() {
+  return clampInt(state.room?.maxQuestionsPerStudent, 1, 10, MAX_QUESTIONS_PER_STUDENT);
+}
+
+function getMaxComplimentsPerStudent() {
+  return clampInt(state.room?.maxComplimentsPerStudent, 1, 10, MAX_COMPLIMENTS_PER_STUDENT);
+}
+
 function getNextQuestionId(authorKey) {
   const existingIds = new Set(getQuestions().map((question) => question.id));
-  for (let index = 1; index <= MAX_QUESTIONS_PER_STUDENT; index += 1) {
+  for (let index = 1; index <= getMaxQuestionsPerStudent(); index += 1) {
     const questionId = `${authorKey}_${index}`;
     if (!existingIds.has(questionId)) {
       return questionId;
@@ -3459,7 +3527,7 @@ function getNextQuestionId(authorKey) {
 
 function getNextComplimentId(studentId) {
   const existingIds = new Set(getCompliments().map((compliment) => compliment.id));
-  for (let index = 1; index <= MAX_COMPLIMENTS_PER_STUDENT; index += 1) {
+  for (let index = 1; index <= getMaxComplimentsPerStudent(); index += 1) {
     const complimentId = `${studentId}_${index}`;
     if (!existingIds.has(complimentId)) {
       return complimentId;

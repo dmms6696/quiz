@@ -24,6 +24,12 @@
         "timeLimit": {
           ".validate": "newData.isNumber() && newData.val() >= 5 && newData.val() <= 120"
         },
+        "maxQuestionsPerStudent": {
+          ".validate": "newData.isNumber() && newData.val() >= 1 && newData.val() <= 10"
+        },
+        "maxComplimentsPerStudent": {
+          ".validate": "newData.isNumber() && newData.val() >= 1 && newData.val() <= 10"
+        },
         "students": {
           "$studentId": {
             "name": {
