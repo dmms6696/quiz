@@ -2627,8 +2627,8 @@ async function enterTeacher() {
         questions: {},
         compliments: {},
         answers: {},
-        mafia: getDefaultMafiaState(),
-        liar: getDefaultLiarState()
+        mafia: selectedMode === "mafia" ? getDefaultMafiaState() : null,
+        liar: selectedMode === "liar" ? getInitialLiarStateForWrite() : null
       });
     } else {
       const room = snapshot.val();
@@ -2641,8 +2641,8 @@ async function enterTeacher() {
           currentClueIndex: 0,
           questionOrder: null,
           complimentOrder: null,
-          mafia: getDefaultMafiaState(),
-          liar: getDefaultLiarState(),
+          mafia: selectedMode === "mafia" ? getDefaultMafiaState() : null,
+          liar: selectedMode === "liar" ? getInitialLiarStateForWrite() : null,
           answers: null,
           complimentAnswers: null,
           complimentBonuses: null
@@ -4223,8 +4223,8 @@ async function switchRoomMode(nextMode) {
       currentClueIndex: 0,
       questionOrder: null,
       complimentOrder: null,
-      mafia: getDefaultMafiaState(),
-      liar: getDefaultLiarState(),
+      mafia: nextMode === "mafia" ? getDefaultMafiaState() : null,
+      liar: nextMode === "liar" ? getInitialLiarStateForWrite() : null,
       answers: null,
       complimentAnswers: null,
       complimentBonuses: null
@@ -4614,6 +4614,12 @@ function getDefaultLiarState() {
     voteOpenedAt: null,
     voteResultOpenedAt: null,
     revealedAt: null
+  };
+}
+
+function getInitialLiarStateForWrite() {
+  return {
+    settings: getDefaultLiarSettings()
   };
 }
 
