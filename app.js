@@ -66,6 +66,13 @@ const MIN_CATCHMIND_ROUND_SECONDS = 31;
 const MAX_CATCHMIND_ROUND_SECONDS = 180;
 const DEFAULT_CATCHMIND_ROUNDS = 5;
 const CATCHMIND_DRAW_FLUSH_MS = 140;
+const DEFAULT_SEAT_ROWS = 5;
+const DEFAULT_SEAT_COLUMNS = 3;
+const DEFAULT_SEAT_CARD_PHASE_SECONDS = 12;
+const MIN_SEAT_CARD_PHASE_SECONDS = 5;
+const MAX_SEAT_CARD_PHASE_SECONDS = 60;
+const SEAT_FINAL_COUNTDOWN_SECONDS = 5;
+const SEAT_REVEAL_INTERVAL_MS = 260;
 const GHOST_BINGO_REQUIRED_CONDITIONS = 8;
 const GHOST_BINGO_FREE_ID = "FREE";
 const GHOST_CHAT_MAX_LENGTH = 100;
@@ -231,6 +238,10 @@ const state = {
   catchmindTool: "pen",
   catchmindColor: "#111827",
   catchmindSize: 5,
+  seatSettingsDraft: null,
+  seatCardTargetMode: false,
+  seatCardTargetSeats: [],
+  seatInteractionKey: "",
   catchmindDrawing: {
     active: false,
     strokeId: "",
@@ -392,6 +403,13 @@ function renderHome() {
                     <small>그림을 보고 제시어를 가장 빠르게 맞혀라!</small>
                   </span>
                 </label>
+                <label class="mode-tile">
+                  <input type="radio" name="teacherMode" value="seat" />
+                  <span>
+                    <strong>자리바꾸기 게임</strong>
+                    <small>자리를 고르고, 카드를 사용하고, 마지막까지 내 자리를 지켜라!</small>
+                  </span>
+                </label>
               </div>
             </div>
             <div class="button-row">
@@ -434,6 +452,11 @@ function renderStudentRoute() {
 
   if (getRoomMode() === "catchmind") {
     renderCatchmindStudentRoute();
+    return;
+  }
+
+  if (getRoomMode() === "seat") {
+    renderSeatStudentRoute();
     return;
   }
 
@@ -1642,6 +1665,11 @@ function renderDisplayRoute(force = false) {
     return;
   }
 
+  if (getRoomMode() === "seat") {
+    renderSeatDisplay(force);
+    return;
+  }
+
   renderQuizDisplay(force);
 }
 
@@ -1654,7 +1682,9 @@ function renderDisplayShell(viewName, title, subtitle, bodyHtml, afterRender = n
         ? "liar-mode"
         : getRoomMode() === "catchmind"
           ? "catchmind-mode"
-          : "";
+          : getRoomMode() === "seat"
+            ? "seat-mode"
+            : "";
   setView(viewName, `
     <section class="screen display-stage ${modeClass}">
       <div class="display-header">
@@ -2001,6 +2031,11 @@ function renderTeacherDashboard(force = true) {
 
   if (getRoomMode() === "catchmind") {
     renderCatchmindTeacherDashboard(force);
+    return;
+  }
+
+  if (getRoomMode() === "seat") {
+    renderSeatTeacherDashboard(force);
     return;
   }
 
@@ -2778,7 +2813,7 @@ function renderCatchmindRoundResult(viewName, showTeacherControls, force = false
         <h1>${escapeHtml(round.word)}</h1>
         <p class="lead">출제자: ${escapeHtml(round.drawerName)}</p>
       </section>
-      <div class="grid-2">
+      <div class="grid-2 home-entry-grid">
         <section class="panel">
           <h2>정답 순위</h2>
           ${renderCatchmindCorrectRanking()}
@@ -4089,6 +4124,701 @@ function getCatchmindStrokeRenderKey() {
   const round = getCurrentCatchmindRound();
   const clearVersion = getCurrentCatchmindRoundData().clearVersion || 0;
   return `${round?.roundId || "none"}:${strokes.length}:${last?.strokeId || "none"}:${last?.updatedAt || 0}:${clearVersion}`;
+}
+
+// =========================
+// 자리바꾸기 게임
+// =========================
+
+function getDefaultSeatGameSettings() {
+  return {
+    rows: DEFAULT_SEAT_ROWS,
+    columns: DEFAULT_SEAT_COLUMNS,
+    disabledSeats: {},
+    cardEnabled: true,
+    cardPhaseSeconds: DEFAULT_SEAT_CARD_PHASE_SECONDS
+  };
+}
+
+function getInitialSeatGameStateForWrite(settings = getDefaultSeatGameSettings()) {
+  return {
+    settings: normalizeSeatGameSettings(settings)
+  };
+}
+
+function normalizeSeatGameSettings(settings = {}) {
+  const defaults = getDefaultSeatGameSettings();
+  const rows = clampInt(settings.rows, 1, 10, defaults.rows);
+  const columns = clampInt(settings.columns, 1, 10, defaults.columns);
+  const total = rows * columns;
+  const disabledSeats = Object.fromEntries(
+    Object.keys(settings.disabledSeats || {})
+      .map(Number)
+      .filter((seatNumber) => Number.isInteger(seatNumber) && seatNumber >= 1 && seatNumber <= total)
+      .map((seatNumber) => [seatNumber, true])
+  );
+  return {
+    rows,
+    columns,
+    disabledSeats,
+    cardEnabled: settings.cardEnabled !== false,
+    cardPhaseSeconds: clampInt(
+      settings.cardPhaseSeconds,
+      MIN_SEAT_CARD_PHASE_SECONDS,
+      MAX_SEAT_CARD_PHASE_SECONDS,
+      defaults.cardPhaseSeconds
+    )
+  };
+}
+
+function normalizeSeatGameRecord(raw = {}) {
+  const settings = normalizeSeatGameSettings(raw.settings || {});
+  return {
+    settings,
+    gameId: String(raw.gameId || ""),
+    selectionOrder: normalizeIndexedList(raw.selectionOrder),
+    currentSelectionIndex: Math.max(0, Number(raw.currentSelectionIndex || 0)),
+    assignments: { ...(raw.assignments || {}) },
+    playerCards: { ...(raw.playerCards || {}) },
+    protectedPlayerIds: { ...(raw.protectedPlayerIds || {}) },
+    notifications: { ...(raw.notifications || {}) },
+    cardActionHistory: { ...(raw.cardActionHistory || {}) },
+    cardPhaseStartedAt: Number(raw.cardPhaseStartedAt || 0),
+    cardPhaseEndsAt: Number(raw.cardPhaseEndsAt || 0),
+    lastPublicEvent: raw.lastPublicEvent || null,
+    finalRevealStartedAt: Number(raw.finalRevealStartedAt || 0),
+    finalRevealOrder: normalizeIndexedList(raw.finalRevealOrder).map(Number).filter(Number.isFinite)
+  };
+}
+
+function getSeatGameState() {
+  return normalizeSeatGameRecord(state.room?.seatGame || {});
+}
+
+function getSeatGameSettings() {
+  return getSeatGameState().settings;
+}
+
+function getSeatSettingsDraft() {
+  if (!state.seatSettingsDraft) {
+    state.seatSettingsDraft = normalizeSeatGameSettings(getSeatGameSettings());
+  }
+  return normalizeSeatGameSettings(state.seatSettingsDraft);
+}
+
+function getSeatKey(seatNumber) {
+  return `seat_${Number(seatNumber)}`;
+}
+
+function getSeatNumberFromKey(seatKey) {
+  return Number(String(seatKey || "").replace("seat_", ""));
+}
+
+function getSeatActiveNumbers(settings = getSeatGameSettings()) {
+  const normalized = normalizeSeatGameSettings(settings);
+  return Array.from({ length: normalized.rows * normalized.columns }, (_, index) => index + 1)
+    .filter((seatNumber) => !normalized.disabledSeats[seatNumber]);
+}
+
+function getSeatForStudent(studentId, assignments = getSeatGameState().assignments) {
+  const entry = Object.entries(assignments || {}).find(([, ownerId]) => ownerId === studentId);
+  return entry ? getSeatNumberFromKey(entry[0]) : null;
+}
+
+function getSeatOwnerStudent(seatNumber, game = getSeatGameState()) {
+  const ownerId = game.assignments[getSeatKey(seatNumber)];
+  return getStudents().find((student) => student.id === ownerId) || null;
+}
+
+function getSeatCurrentPlayerId(game = getSeatGameState()) {
+  return game.selectionOrder[game.currentSelectionIndex] || "";
+}
+
+function getSeatCurrentPlayer(game = getSeatGameState()) {
+  const currentId = getSeatCurrentPlayerId(game);
+  return getStudents().find((student) => student.id === currentId) || null;
+}
+
+function getMySeatCard(game = getSeatGameState()) {
+  return game.playerCards[state.studentId] || null;
+}
+
+function getSeatCardDefinition(type) {
+  const definitions = {
+    swap: {
+      icon: "↔",
+      name: "자리 교환",
+      description: "선택된 두 자리의 주인을 서로 바꿉니다."
+    },
+    move: {
+      icon: "→",
+      name: "다시 선택",
+      description: "내 현재 자리를 포기하고 남아 있는 자리 중 하나를 새롭게 선택합니다."
+    },
+    randomSwap: {
+      icon: "?",
+      name: "운명의 교환",
+      description: "선택된 자리 두 곳의 주인을 무작위로 서로 바꿉니다."
+    },
+    protect: {
+      icon: "◆",
+      name: "자리 보호",
+      description: "내 현재 자리를 게임 종료까지 카드 효과로 이동하지 않게 보호합니다."
+    }
+  };
+  return definitions[type] || definitions.swap;
+}
+
+function getSeatCardEligibility(card, studentId = state.studentId, game = getSeatGameState()) {
+  if (!card || card.used) {
+    return { allowed: false, reason: "이미 사용한 카드입니다.", targetSeats: [] };
+  }
+  if ((state.room?.status || "waiting") !== "cardPhase") {
+    return { allowed: false, reason: "카드 활용 시간에만 사용할 수 있습니다.", targetSeats: [] };
+  }
+
+  const protectedIds = game.protectedPlayerIds || {};
+  const assignedSeats = getSeatActiveNumbers(game.settings)
+    .filter((seatNumber) => Boolean(game.assignments[getSeatKey(seatNumber)]));
+  const unprotectedAssignedSeats = assignedSeats.filter((seatNumber) => {
+    const ownerId = game.assignments[getSeatKey(seatNumber)];
+    return !protectedIds[ownerId];
+  });
+  const mySeat = getSeatForStudent(studentId, game.assignments);
+  const emptySeats = getSeatActiveNumbers(game.settings)
+    .filter((seatNumber) => !game.assignments[getSeatKey(seatNumber)]);
+
+  if (card.type === "swap" || card.type === "randomSwap") {
+    return unprotectedAssignedSeats.length >= 2
+      ? { allowed: true, reason: "", targetSeats: unprotectedAssignedSeats }
+      : { allowed: false, reason: "보호되지 않은 선택 완료 자리가 2개 이상 필요합니다.", targetSeats: [] };
+  }
+  if (card.type === "move") {
+    if (!mySeat) {
+      return { allowed: false, reason: "먼저 내 자리를 선택해야 사용할 수 있습니다.", targetSeats: [] };
+    }
+    if (protectedIds[studentId]) {
+      return { allowed: false, reason: "보호된 자리는 이동할 수 없습니다.", targetSeats: [] };
+    }
+    return emptySeats.length
+      ? { allowed: true, reason: "", targetSeats: emptySeats }
+      : { allowed: false, reason: "현재 선택 가능한 빈자리가 없습니다.", targetSeats: [] };
+  }
+  if (card.type === "protect") {
+    if (!mySeat) {
+      return { allowed: false, reason: "먼저 내 자리를 선택해야 사용할 수 있습니다.", targetSeats: [] };
+    }
+    return protectedIds[studentId]
+      ? { allowed: false, reason: "내 자리가 이미 보호되어 있습니다.", targetSeats: [] }
+      : { allowed: true, reason: "", targetSeats: [mySeat] };
+  }
+  return { allowed: false, reason: "사용할 수 없는 카드입니다.", targetSeats: [] };
+}
+
+function syncSeatInteractionState(game, status) {
+  const card = getMySeatCard(game);
+  const key = `${game.gameId}:${status}:${game.cardPhaseStartedAt}:${Boolean(card?.used)}`;
+  if (state.seatInteractionKey !== key) {
+    state.seatInteractionKey = key;
+    state.seatCardTargetMode = false;
+    state.seatCardTargetSeats = [];
+  }
+}
+
+function renderSeatStudentRoute() {
+  const status = state.room?.status || "waiting";
+  const game = getSeatGameState();
+  syncSeatInteractionState(game, status);
+
+  if (status === "waiting" || !game.gameId) {
+    renderSeatStudentWaiting(true);
+    return;
+  }
+  if (status === "seatSelection") {
+    renderSeatStudentSelection(true);
+    return;
+  }
+  if (status === "cardPhase") {
+    renderSeatStudentCardPhase(true);
+    return;
+  }
+  if (status === "finalReady") {
+    renderSeatStudentFinalReady(true);
+    return;
+  }
+  if (status === "finalReveal" || status === "finished") {
+    renderSeatFinalResult(`student-seat-${status}`, false, true);
+    return;
+  }
+  renderSeatStudentWaiting(true);
+}
+
+function renderSeatStudentWaiting(force = false) {
+  setView("seat-student-waiting", `
+    <section class="screen seat-mode">
+      <div class="status-bar">
+        <button class="btn ghost" id="backHomeBtn" type="button">처음으로</button>
+        <span class="pill blue">자리바꾸기 게임</span>
+        <span class="pill blue">방 코드 ${escapeHtml(state.roomCode)}</span>
+      </div>
+      <section class="panel seat-panel result-panel">
+        <h1>선생님이 게임을 준비하고 있습니다.</h1>
+        <p class="lead">자리를 고르고 카드를 사용한 뒤, 마지막에 새로운 자리를 공개합니다.</p>
+        <div class="stats">
+          <div class="stat"><span class="muted">입장 학생</span><span class="num">${getStudents().length}</span></div>
+          <div class="stat"><span class="muted">접속 학생</span><span class="num">${getStudents().filter((student) => student.connected).length}</span></div>
+        </div>
+      </section>
+    </section>
+  `, () => document.querySelector("#backHomeBtn")?.addEventListener("click", renderHome), force);
+}
+
+function renderSeatStudentSelection(force = false) {
+  const game = getSeatGameState();
+  const orderIndex = game.selectionOrder.indexOf(state.studentId);
+  const currentNumber = game.currentSelectionIndex + 1;
+  const isMyTurn = getSeatCurrentPlayerId(game) === state.studentId;
+  const mySeat = getSeatForStudent(state.studentId, game.assignments);
+  const activeSeats = getSeatActiveNumbers(game.settings);
+  const availableSeats = activeSeats.filter((seatNumber) => !game.assignments[getSeatKey(seatNumber)]);
+
+  setView(`seat-student-selection-${game.gameId}-${game.currentSelectionIndex}`, `
+    <section class="screen seat-mode">
+      <div class="status-bar">
+        <div>
+          <p class="eyebrow">당신의 자리 선택 순서</p>
+          <h1>${orderIndex >= 0 ? `${orderIndex + 1}번째` : "확인 중"}</h1>
+        </div>
+        <span class="pill ${isMyTurn ? "green" : "blue"}">${currentNumber}/${game.selectionOrder.length}번째 선택</span>
+      </div>
+      ${renderSeatPrivateNotice(game)}
+      <section class="panel seat-panel result-panel">
+        ${isMyTurn && !mySeat ? `
+          <span class="pill green">지금 당신의 차례입니다!</span>
+          <h1>원하는 자리를 선택하세요.</h1>
+          <p class="lead">선택 가능한 자리 ${availableSeats.length}개 중 하나를 눌러 주세요.</p>
+        ` : `
+          <h1>${currentNumber}번째 자리 선택이 진행 중입니다.</h1>
+          <p class="lead">누가 선택 중인지는 마지막까지 비밀입니다.</p>
+        `}
+      </section>
+      ${renderSeatGrid({ game, interactive: isMyTurn && !mySeat })}
+      ${renderSeatMySeatPanel(game)}
+    </section>
+  `, () => setupSeatStudentSelectionHandlers(isMyTurn && !mySeat), force);
+}
+
+function renderSeatStudentCardPhase(force = false) {
+  const game = getSeatGameState();
+  const card = getMySeatCard(game);
+  setView(`seat-student-card-${game.gameId}-${game.cardPhaseStartedAt}-${Boolean(card?.used)}-${state.seatCardTargetMode}-${state.seatCardTargetSeats.join("-")}`, `
+    <section class="screen seat-mode">
+      <div class="status-bar">
+        <div>
+          <p class="eyebrow">카드 활용 시간</p>
+          <h1 id="seatStudentCardTimer">${game.settings.cardPhaseSeconds}초</h1>
+        </div>
+        <span class="pill gold">카드를 사용할 학생은 지금 사용하세요.</span>
+      </div>
+      <div class="timer-wrap">
+        <div class="timer-track"><div id="seatStudentCardTimerFill" class="timer-fill"></div></div>
+      </div>
+      ${renderSeatPrivateNotice(game)}
+      ${renderSeatPublicEvent(game.lastPublicEvent)}
+      <div class="seat-student-layout">
+        <div>
+          ${renderSeatGrid({ game })}
+          ${renderSeatMySeatPanel(game)}
+        </div>
+        <aside class="panel seat-card-panel">
+          ${renderSeatStudentCard(game)}
+        </aside>
+      </div>
+    </section>
+  `, () => {
+    setupSeatStudentCardHandlers();
+    setupSeatCardPhaseTimer({
+      textSelector: "#seatStudentCardTimer",
+      fillSelector: "#seatStudentCardTimerFill"
+    });
+  }, force);
+}
+
+function renderSeatStudentFinalReady(force = false) {
+  const game = getSeatGameState();
+  setView(`seat-student-final-ready-${game.gameId}`, `
+    <section class="screen seat-mode">
+      <section class="panel seat-panel result-panel">
+        <span class="pill gold">자리 확정</span>
+        <h1>모든 자리가 확정되었습니다.</h1>
+        <p class="lead">선생님이 최종 자리 공개를 시작할 때까지 기다려 주세요.</p>
+      </section>
+      ${renderSeatGrid({ game })}
+      ${renderSeatMySeatPanel(game)}
+      ${renderSeatPrivateNotice(game)}
+    </section>
+  `, () => setupSeatNoticeDismissHandler(), force);
+}
+
+function renderSeatTeacherDashboard(force = true) {
+  const status = state.room?.status || "waiting";
+  const game = getSeatGameState();
+  const settings = status === "waiting" ? getSeatSettingsDraft() : game.settings;
+  const students = getStudents();
+  const activeSeats = getSeatActiveNumbers(settings);
+  const currentPlayer = getSeatCurrentPlayer(game);
+  const assignmentCount = Object.keys(game.assignments || {}).length;
+
+  if (status === "finalReveal") {
+    renderSeatFinalResult("teacher-seat-final-reveal", true, force);
+    return;
+  }
+
+  setView(`teacher-seat-${status}-${game.gameId}-${game.currentSelectionIndex}-${game.cardPhaseStartedAt}-${Object.keys(game.cardActionHistory).length}`, `
+    <section class="screen seat-mode">
+      <div class="status-bar">
+        <div><p class="eyebrow">교사 화면</p><h1>자리바꾸기 게임</h1></div>
+        <button class="btn ghost" id="backHomeBtn" type="button">처음으로</button>
+      </div>
+      <div class="panel seat-panel">
+        <div class="status-bar">
+          <div><p class="muted small">학생들에게 알려 줄 방 코드</p><div class="room-code">${escapeHtml(state.roomCode)}</div></div>
+          <div class="button-row">
+            <span class="pill ${statusPillClass(status)}">${statusLabel(status)}</span>
+            <button class="btn ghost" id="copyRoomCodeBtn" type="button">방 코드 복사</button>
+            <button class="btn dark" data-action="open-display" type="button">교실 화면 팝업</button>
+          </div>
+        </div>
+        <div class="stats">
+          <div class="stat"><span class="muted">참가 학생</span><span class="num">${students.length}</span></div>
+          <div class="stat"><span class="muted">사용 자리</span><span class="num">${activeSeats.length}</span></div>
+          <div class="stat"><span class="muted">선택 완료</span><span class="num">${assignmentCount}</span></div>
+        </div>
+      </div>
+      <div class="teacher-grid">
+        <aside class="panel">
+          ${renderTeacherModeControls()}
+          ${status === "waiting" ? renderSeatTeacherSettings(settings, students.length) : renderSeatTeacherControls(status)}
+          ${status !== "waiting" ? renderSeatTeacherSecrets(game) : ""}
+          <div class="button-row">
+            <button class="btn danger" data-action="reset" type="button">게임 초기화</button>
+            <button class="btn danger" data-action="clear-room" type="button">학생/자료 목록 초기화</button>
+          </div>
+        </aside>
+        <div class="screen">
+          <section class="panel seat-panel">
+            ${status === "waiting" ? `
+              <h2>교실 자리 미리보기</h2>
+              <p class="muted">사용하지 않는 자리는 눌러서 X로 바꿀 수 있습니다.</p>
+              ${renderSeatGrid({ settings, setup: true })}
+            ` : `
+              <div class="status-bar">
+                <div>
+                  <p class="eyebrow">현재 진행</p>
+                  <h2>${status === "seatSelection" ? `${game.currentSelectionIndex + 1}번째 자리 선택` : statusLabel(status)}</h2>
+                </div>
+                ${status === "seatSelection" && currentPlayer ? `<span class="pill green">교사용 확인: ${escapeHtml(currentPlayer.name)}</span>` : ""}
+              </div>
+              ${status === "cardPhase" ? `
+                <div class="timer-wrap">
+                  <div class="timer-top"><span>카드 활용 남은 시간</span><span id="seatTeacherCardTimer">${game.settings.cardPhaseSeconds}초</span></div>
+                  <div class="timer-track"><div id="seatTeacherCardTimerFill" class="timer-fill"></div></div>
+                </div>
+              ` : ""}
+              ${renderSeatPublicEvent(game.lastPublicEvent)}
+              ${renderSeatGrid({ game })}
+            `}
+          </section>
+          ${status !== "waiting" ? `
+            <section class="panel">
+              <h2>카드 사용 기록</h2>
+              ${renderSeatCardHistory(game)}
+            </section>
+          ` : `
+            <section class="panel"><h2>참여 학생</h2>${renderStudentList(students)}</section>
+          `}
+        </div>
+      </div>
+    </section>
+  `, () => {
+    setupSeatTeacherHandlers(status);
+    if (status === "cardPhase") {
+      setupSeatCardPhaseTimer({
+        textSelector: "#seatTeacherCardTimer",
+        fillSelector: "#seatTeacherCardTimerFill",
+        onEnd: endSeatCardPhase
+      });
+    }
+  }, force);
+}
+
+function renderSeatTeacherSettings(settings, studentCount) {
+  const activeCount = getSeatActiveNumbers(settings).length;
+  const match = activeCount === studentCount && studentCount > 0;
+  return `
+    <section class="panel tight">
+      <h2>교실 자리 설정</h2>
+      <div class="grid-2">
+        <div class="field"><label for="seatRowsInput">행</label><input id="seatRowsInput" type="number" min="1" max="10" value="${settings.rows}" /></div>
+        <div class="field"><label for="seatColumnsInput">열</label><input id="seatColumnsInput" type="number" min="1" max="10" value="${settings.columns}" /></div>
+      </div>
+      <label class="check-line"><input id="seatCardEnabledInput" type="checkbox" ${settings.cardEnabled ? "checked" : ""} /> 카드 사용</label>
+      <div class="field">
+        <label for="seatCardPhaseSecondsInput">카드 활용 시간(초)</label>
+        <input id="seatCardPhaseSecondsInput" type="number" min="${MIN_SEAT_CARD_PHASE_SECONDS}" max="${MAX_SEAT_CARD_PHASE_SECONDS}" value="${settings.cardPhaseSeconds}" ${settings.cardEnabled ? "" : "disabled"} />
+      </div>
+      <div class="notice ${match ? "success" : "warn"}">
+        참가 학생 ${studentCount}명 · 사용 가능한 자리 ${activeCount}개
+        ${match ? "" : "<br />학생 수와 사용 가능한 자리 수가 같아야 시작할 수 있습니다."}
+      </div>
+      <div class="button-row">
+        <button class="btn primary" data-action="seat-save-settings" type="button">설정 저장</button>
+        <button class="btn success" data-action="seat-start" type="button" ${match ? "" : "disabled"}>게임 시작</button>
+      </div>
+    </section>
+  `;
+}
+
+function renderSeatTeacherControls(status) {
+  return `
+    <section class="panel tight">
+      <h2>진행 조작</h2>
+      <div class="button-row">
+        <button class="btn warn" data-action="seat-end-card" type="button" ${status === "cardPhase" ? "" : "disabled"}>카드 활용 턴 종료</button>
+        <button class="btn success" data-action="seat-final-reveal" type="button" ${status === "finalReady" ? "" : "disabled"}>최종 자리 공개</button>
+        <button class="btn success" data-action="seat-restart-same" type="button" ${status === "finished" ? "" : "disabled"}>같은 교실 구조로 다시 하기</button>
+        <button class="btn ghost" data-action="seat-configure" type="button">설정 변경하기</button>
+      </div>
+    </section>
+  `;
+}
+
+function renderSeatTeacherSecrets(game) {
+  const students = new Map(getStudents().map((student) => [student.id, student]));
+  return `
+    <details class="teacher-secret-box">
+      <summary>전체 선택 순서 확인</summary>
+      <ol class="list">
+        ${game.selectionOrder.map((studentId, index) => `<li class="list-row"><strong>${index + 1}. ${escapeHtml(students.get(studentId)?.name || "이름 없음")}</strong></li>`).join("")}
+      </ol>
+    </details>
+    ${game.settings.cardEnabled ? `
+      <details class="teacher-secret-box">
+        <summary>학생별 카드 현황 확인</summary>
+        <ul class="list">
+          ${game.selectionOrder.map((studentId) => {
+            const card = game.playerCards[studentId];
+            const definition = getSeatCardDefinition(card?.type);
+            return `<li class="list-row split"><strong>${escapeHtml(students.get(studentId)?.name || "이름 없음")}</strong><span class="pill ${card?.used ? "" : "green"}">${escapeHtml(definition.name)} · ${card?.used ? "사용 완료" : "보유 중"}</span></li>`;
+          }).join("")}
+        </ul>
+      </details>
+    ` : ""}
+  `;
+}
+
+function renderSeatDisplay(force = false) {
+  const status = state.room?.status || "waiting";
+  const game = getSeatGameState();
+  const viewName = `display-seat-${status}-${game.gameId}-${game.currentSelectionIndex}-${game.cardPhaseStartedAt}-${Object.keys(game.cardActionHistory).length}`;
+
+  if (status === "finalReveal" || status === "finished") {
+    renderDisplayShell(viewName, "최종 자리 공개", status === "finished" ? "새로운 자리를 확인하세요." : "자리 공개가 시작됩니다.", `
+      ${status === "finalReveal" ? `<section class="panel seat-countdown-panel"><p class="eyebrow">자리 공개까지</p><h1 id="seatRevealCountdown">${SEAT_FINAL_COUNTDOWN_SECONDS}</h1></section>` : ""}
+      ${renderSeatGrid({ game, reveal: true, revealAll: status === "finished" })}
+    `, () => {
+      if (status === "finalReveal") {
+        setupSeatFinalRevealAnimation({ teacher: false });
+      }
+    }, force);
+    return;
+  }
+
+  let title = "자리바꾸기 게임";
+  let subtitle = "자리를 고르고, 카드를 사용하고, 마지막까지 내 자리를 지켜라!";
+  let body = `
+    <section class="panel seat-panel result-panel">
+      <h1>게임을 준비 중입니다.</h1>
+      <div class="stats"><div class="stat"><span class="muted">입장 학생</span><span class="num">${getStudents().length}</span></div></div>
+    </section>
+  `;
+  let afterRender = null;
+
+  if (status === "seatSelection") {
+    title = `${game.currentSelectionIndex + 1}번째 자리 선택 진행 중`;
+    subtitle = "선택 중인 학생의 이름은 비공개입니다.";
+    body = `${renderSeatPublicEvent(game.lastPublicEvent)}${renderSeatGrid({ game })}`;
+  } else if (status === "cardPhase") {
+    title = "카드 활용 시간";
+    subtitle = "카드를 사용할 학생은 지금 사용하세요.";
+    body = `
+      <section class="panel">
+        <div class="timer-top"><span>남은 시간</span><strong id="seatDisplayCardTimer">${game.settings.cardPhaseSeconds}초</strong></div>
+        <div class="timer-track"><div id="seatDisplayCardTimerFill" class="timer-fill"></div></div>
+      </section>
+      ${renderSeatPublicEvent(game.lastPublicEvent)}
+      ${renderSeatGrid({ game })}
+    `;
+    afterRender = () => setupSeatCardPhaseTimer({ textSelector: "#seatDisplayCardTimer", fillSelector: "#seatDisplayCardTimerFill" });
+  } else if (status === "finalReady") {
+    title = "모든 자리가 확정되었습니다.";
+    subtitle = "선생님이 최종 자리 공개를 준비하고 있습니다.";
+    body = renderSeatGrid({ game });
+  }
+  renderDisplayShell(viewName, title, subtitle, body, afterRender, force);
+}
+
+function renderSeatFinalResult(viewName, showTeacherControls, force = false) {
+  const game = getSeatGameState();
+  const status = state.room?.status || "finished";
+  const revealing = status === "finalReveal";
+  const mySeat = getSeatForStudent(state.studentId, game.assignments);
+  setView(viewName, `
+    <section class="screen seat-mode">
+      <div class="status-bar">
+        <div><p class="eyebrow">${revealing ? "최종 공개" : "최종 자리"}</p><h1>${revealing ? "자리 공개가 시작됩니다." : "새로운 자리 배치"}</h1></div>
+        ${showTeacherControls && !revealing ? `
+          <div class="button-row">
+            <button class="btn success" data-action="seat-restart-same" type="button">같은 교실 구조로 다시 하기</button>
+            <button class="btn ghost" data-action="seat-configure" type="button">설정 변경하기</button>
+            <button class="btn dark" id="backHomeBtn" type="button">플레이그라운드로 돌아가기</button>
+          </div>
+        ` : ""}
+      </div>
+      ${revealing ? `<section class="panel seat-countdown-panel"><p class="eyebrow">자리 공개까지</p><h1 id="seatRevealCountdown">${SEAT_FINAL_COUNTDOWN_SECONDS}</h1></section>` : ""}
+      ${!showTeacherControls && mySeat ? `<section class="panel seat-my-final"><p class="eyebrow">내 최종 자리</p><h1>${mySeat}번</h1></section>` : ""}
+      ${renderSeatGrid({ game, reveal: true, revealAll: !revealing, highlightStudentId: showTeacherControls ? "" : state.studentId })}
+      ${showTeacherControls && !revealing ? `<section class="panel"><h2>카드 사용 기록</h2>${renderSeatCardHistory(game)}</section>` : ""}
+    </section>
+  `, () => {
+    document.querySelectorAll("[data-action]").forEach((button) => button.addEventListener("click", () => handleTeacherAction(button.dataset.action)));
+    document.querySelector("#backHomeBtn")?.addEventListener("click", renderHome);
+    if (revealing) {
+      setupSeatFinalRevealAnimation({ teacher: showTeacherControls });
+    }
+  }, force);
+}
+
+function renderSeatGrid({ game = null, settings = null, setup = false, interactive = false, targetSeats = [], reveal = false, revealAll = false, highlightStudentId = "" } = {}) {
+  const resolvedGame = game || getSeatGameState();
+  const resolvedSettings = normalizeSeatGameSettings(settings || resolvedGame.settings);
+  const total = resolvedSettings.rows * resolvedSettings.columns;
+  const targetSet = new Set(targetSeats.map(Number));
+  const selectedTargetSet = new Set(state.seatCardTargetSeats.map(Number));
+  const revealOrder = resolvedGame.finalRevealOrder.length ? resolvedGame.finalRevealOrder : getSeatActiveNumbers(resolvedSettings);
+  return `
+    <section class="seat-board-wrap">
+      <div class="classroom-board">칠판</div>
+      <div class="seat-grid" style="--seat-columns:${resolvedSettings.columns}">
+        ${Array.from({ length: total }, (_, index) => index + 1).map((seatNumber) => {
+          const disabled = Boolean(resolvedSettings.disabledSeats[seatNumber]);
+          if (setup) {
+            return `<button class="seat-tile setup ${disabled ? "disabled-seat" : ""}" data-seat-toggle-disabled="${seatNumber}" type="button"><strong>${disabled ? "X" : seatNumber}</strong><span>${disabled ? "사용 안 함" : "사용"}</span></button>`;
+          }
+          if (disabled) {
+            return `<div class="seat-tile disabled-seat"><strong>X</strong><span>사용 안 함</span></div>`;
+          }
+          const seatKey = getSeatKey(seatNumber);
+          const ownerId = resolvedGame.assignments[seatKey] || "";
+          const assigned = Boolean(ownerId);
+          const protectedSeat = Boolean(ownerId && resolvedGame.protectedPlayerIds[ownerId]);
+          const owner = getStudents().find((student) => student.id === ownerId);
+          const canClick = interactive ? !assigned : targetSet.has(seatNumber);
+          const isSelectedTarget = selectedTargetSet.has(seatNumber);
+          const revealIndex = revealOrder.indexOf(seatNumber);
+          const revealedClass = revealAll ? "revealed" : "reveal-pending";
+          const ownClass = highlightStudentId && ownerId === highlightStudentId ? "my-final-seat" : "";
+          const dataAttribute = interactive ? `data-seat-select="${seatNumber}"` : targetSet.has(seatNumber) ? `data-seat-card-target="${seatNumber}"` : "";
+          return `<button class="seat-tile ${assigned ? "assigned" : "available"} ${protectedSeat ? "protected" : ""} ${isSelectedTarget ? "selected-target" : ""} ${reveal ? revealedClass : ""} ${ownClass}" ${dataAttribute} ${canClick ? "" : "disabled"} type="button" ${reveal ? `data-seat-reveal-index="${Math.max(0, revealIndex)}"` : ""}>
+            <span class="seat-number">${seatNumber}번</span>
+            ${reveal ? `<strong class="seat-owner">${escapeHtml(owner?.name || "-")}</strong>` : `<strong>${assigned ? (protectedSeat ? "보호 · 선택 완료" : "선택 완료") : "선택 가능"}</strong>`}
+          </button>`;
+        }).join("")}
+      </div>
+    </section>
+  `;
+}
+
+function renderSeatMySeatPanel(game) {
+  const mySeat = getSeatForStudent(state.studentId, game.assignments);
+  const protectedSeat = Boolean(game.protectedPlayerIds[state.studentId]);
+  return `
+    <section class="panel seat-my-seat">
+      <p class="eyebrow">내 현재 자리</p>
+      <h1>${mySeat ? `${mySeat}번` : "아직 선택 전"}</h1>
+      ${protectedSeat ? `<span class="pill green">자리 보호 중</span>` : ""}
+    </section>
+  `;
+}
+
+function renderSeatPrivateNotice(game) {
+  const notice = game.notifications[state.studentId];
+  if (!notice) {
+    return "";
+  }
+  const storageKey = `seat_notice_${state.roomCode}_${game.gameId}_${state.studentId}`;
+  if (localStorage.getItem(storageKey) === notice.id) {
+    return "";
+  }
+  return `
+    <section class="notice warn seat-private-notice" data-seat-notice-id="${escapeAttr(notice.id)}">
+      <strong>내 자리가 변경되었습니다!</strong>
+      <p>기존 자리: ${Number(notice.oldSeat)}번 · 현재 자리: ${Number(notice.newSeat)}번</p>
+      <button class="btn ghost" id="seatDismissNoticeBtn" type="button">확인</button>
+    </section>
+  `;
+}
+
+function renderSeatPublicEvent(event) {
+  if (!event?.message) {
+    return "";
+  }
+  return `<section class="notice info seat-public-event"><strong>${escapeHtml(event.title || "자리 소식")}</strong><p>${escapeHtml(event.message)}</p></section>`;
+}
+
+function renderSeatStudentCard(game) {
+  if (!game.settings.cardEnabled) {
+    return `<h2>카드 없는 게임</h2><p class="muted">이번 게임은 자리 선택만 진행합니다.</p>`;
+  }
+  const card = getMySeatCard(game);
+  if (!card) {
+    return `<h2>내 카드</h2><div class="empty">카드 정보를 확인하고 있습니다.</div>`;
+  }
+  const definition = getSeatCardDefinition(card.type);
+  const eligibility = getSeatCardEligibility(card, state.studentId, game);
+  return `
+    <p class="eyebrow">내 카드</p>
+    <div class="seat-card-icon">${escapeHtml(definition.icon)}</div>
+    <h2>${escapeHtml(definition.name)}</h2>
+    <p>${escapeHtml(definition.description)}</p>
+    <span class="pill ${card.used ? "" : "green"}">${card.used ? "사용 완료" : "사용 가능"}</span>
+    ${!card.used && !eligibility.allowed ? `<div class="notice warn">${escapeHtml(eligibility.reason)}</div>` : ""}
+    ${!card.used && eligibility.allowed && !state.seatCardTargetMode ? `<button class="btn primary full" id="seatUseCardBtn" type="button">카드 사용하기</button>` : ""}
+    ${!card.used && eligibility.allowed && state.seatCardTargetMode ? renderSeatCardTargetPicker(card, eligibility, game) : ""}
+  `;
+}
+
+function renderSeatCardTargetPicker(card, eligibility, game) {
+  const targetCount = card.type === "swap" ? 2 : card.type === "move" ? 1 : 0;
+  if (!targetCount) {
+    return `<div class="button-row"><button class="btn ghost" id="seatCancelCardBtn" type="button">취소</button><button class="btn success" id="seatConfirmCardBtn" type="button">카드 사용 확정</button></div>`;
+  }
+  return `
+    <div class="notice info">${card.type === "swap" ? "교환할 자리 두 곳을 선택하세요." : "새롭게 이동할 빈자리를 선택하세요."}</div>
+    ${renderSeatGrid({ game, targetSeats: eligibility.targetSeats })}
+    <div class="button-row">
+      <button class="btn ghost" id="seatCancelCardBtn" type="button">취소</button>
+      <button class="btn success" id="seatConfirmCardBtn" type="button" ${state.seatCardTargetSeats.length === targetCount ? "" : "disabled"}>카드 사용 확정</button>
+    </div>
+  `;
+}
+
+function renderSeatCardHistory(game) {
+  const history = Object.values(game.cardActionHistory || {}).sort((a, b) => Number(a.createdAt || 0) - Number(b.createdAt || 0));
+  if (!history.length) {
+    return `<div class="empty">아직 사용된 카드가 없습니다.</div>`;
+  }
+  return `<ol class="list">${history.map((action) => `<li class="list-row"><div><strong>${escapeHtml(getSeatCardDefinition(action.type).name)}</strong><p class="muted small">${escapeHtml(action.message || "카드 효과가 적용되었습니다.")}</p></div></li>`).join("")}</ol>`;
 }
 
 function renderFinalResult(viewName, showTeacherControls, force = false) {

@@ -164,6 +164,10 @@ h3 {
   gap: 16px;
 }
 
+.home-entry-grid {
+  align-items: start;
+}
+
 .grid-3 {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
