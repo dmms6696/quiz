@@ -10,6 +10,7 @@
 4. 라이어게임: 비슷한 제시어 속 숨어 있는 라이어를 대화와 투표로 추리합니다.
 5. 캐치마인드: 출제자가 그리는 그림을 실시간으로 보고 제시어를 맞힙니다.
 6. 자리바꾸기 게임: 비밀 순서로 자리를 고르고 카드 효과를 사용한 뒤 마지막에 자리 주인을 공개합니다.
+7. 메모리 배틀: 교사가 올린 이미지로 학생마다 독립된 카드판을 풀고 보드 크기별 최고 기록에 도전합니다.
 
 ## 1. 파일 구조
 
@@ -21,9 +22,11 @@ project-root/
 │  ├─ style.css
 │  ├─ app.js
 │  ├─ firebase-rules.json
+│  ├─ storage-rules.txt
 │  └─ README.md
 └─ tests/
-   └─ seat-game-smoke.cjs
+   ├─ seat-game-smoke.cjs
+   └─ memory-battle-smoke.cjs
 ```
 
 ## 2. 주요 설정값
@@ -52,6 +55,9 @@ const DEFAULT_CATCHMIND_ROUND_SECONDS = 60;
 const DEFAULT_SEAT_ROWS = 5;
 const DEFAULT_SEAT_COLUMNS = 3;
 const DEFAULT_SEAT_CARD_PHASE_SECONDS = 12;
+const DEFAULT_MEMORY_BOARD_SIZE = 4;
+const MEMORY_IMAGE_MAX_SIDE = 900;
+const MEMORY_IMAGE_QUALITY = 0.82;
 const GHOST_BINGO_REQUIRED_CONDITIONS = 8;
 const GHOST_CHAT_MAX_LENGTH = 100;
 const GHOST_CHAT_COOLDOWN_MS = 1000;
@@ -70,6 +76,17 @@ const GHOST_CHAT_COOLDOWN_MS = 1000;
 6. Realtime Database 화면의 URL이 `databaseURL`에 들어갔는지 확인합니다.
 7. Rules 탭에 `firebase-rules.json` 내용을 붙여 넣고 게시를 누릅니다.
 
+메모리 배틀은 이미지 저장을 위해 Firebase Storage도 사용합니다.
+
+1. Firebase Console 왼쪽 메뉴에서 Build > Storage를 누릅니다.
+2. `시작하기`를 누르고 Storage 위치를 선택해 버킷을 만듭니다.
+3. Storage 화면 위쪽의 `규칙` 탭을 누릅니다.
+4. `storage-rules.txt`의 내용을 전체 붙여 넣습니다.
+5. 반드시 `게시`를 누릅니다.
+6. `app.js`의 `firebaseConfig.storageBucket` 값이 Firebase SDK 설정값과 같은지 확인합니다.
+
+Realtime Database의 `firebase-rules.json`과 Storage의 `storage-rules.txt`는 서로 다른 규칙입니다. 두 파일을 각각 해당 화면에 게시해야 합니다.
+
 주의: 이 MVP의 교사 비밀번호는 정적 코드 안에 있으므로 완전한 보안 장치가 아닙니다. 실제 공개 서비스로 쓰려면 Firebase Authentication, 교사용 계정, 서버 검증 또는 Cloud Functions를 추가하세요.
 
 ## 4. Firebase 데이터 구조
@@ -77,11 +94,12 @@ const GHOST_CHAT_COOLDOWN_MS = 1000;
 ```text
 rooms
   roomCode
-    mode: quiz | compliment | mafia | liar | catchmind | seat
+    mode: quiz | compliment | mafia | liar | catchmind | seat | memory
     status: waiting | ready | playing | result | targetReveal | authorGuess | authorReveal
             roleAssigned | roleReveal | nightAction | nightResult
             discussion | voting | voteResult | roleRevealDead
-            seatSelection | cardPhase | finalReady | finalReveal | finished
+            seatSelection | cardPhase | finalReady | finalReveal
+            memoryReady | memoryCountdown | memoryPlaying | memoryAwaitingResults | finished
     maxQuestionsPerStudent
     maxComplimentsPerStudent
     students
@@ -428,12 +446,44 @@ rooms
 
 보안 참고: 최종 공개 전 학생 화면과 교실 화면에는 자리 주인 이름을 렌더링하지 않습니다. 다만 현재 MVP는 인증 없이 방 전체 데이터를 구독하므로 개발자 도구 수준의 완전한 비밀 보장은 어렵습니다. 실제 보안이 필요하면 Firebase Authentication, 역할별 읽기 규칙, Cloud Functions를 추가해야 합니다.
 
-## 11. 초기화 버튼 차이
+## 11. 메모리 배틀 사용 방법
 
-- 게임 초기화: 점수와 답변, 진행 상태, 마피아 유령 목록, 유령 빙고, 유령 채팅을 지웁니다. 학생 목록과 제출 자료는 유지됩니다.
-- 학생/자료 목록 초기화: 학생 목록, 문제 목록, 칭찬 카드, 마피아 진행 데이터, 라이어게임 진행 데이터, 캐치마인드 진행 데이터, 자리바꾸기 진행 데이터, 유령 데이터, 답변, 점수, 진행 상태를 모두 지웁니다.
+교사:
 
-## 12. 보안 주의사항
+1. 메모리 배틀을 선택하고 학생들이 방에 접속한 뒤 2×2, 4×4, 6×6 중 보드 크기를 고릅니다.
+2. 필요한 이미지 수만큼 `이미지 추가`로 JPG, JPEG, PNG, WEBP 파일을 선택합니다. 필요한 수는 각각 2장, 8장, 18장입니다.
+3. 미리보기에서 이미지를 확인하고 정확한 수가 준비되면 `게임 생성`을 누릅니다.
+4. 이미지는 브라우저에서 긴 변 900px, 품질 0.82로 최적화됩니다. WebP를 우선 사용하고 지원하지 않는 브라우저에서는 JPEG로 저장한 뒤 Firebase Storage의 `memory-battle/방코드/게임ID/`에 올립니다.
+5. 학생별 준비 완료 수를 확인합니다. 준비가 덜 된 학생이 있어도 확인 후 강제로 시작할 수 있습니다.
+6. 게임 시작 시 공통 시작 시각을 기준으로 3초 카운트다운 뒤 카드판이 열립니다.
+7. 교사는 완료 학생의 시간과 시도 횟수를 볼 수 있지만 학생 화면에는 진행 중 순위가 나오지 않습니다.
+8. 전원 완료 또는 `게임 종료` 후 `최종 결과 공개`를 누르면 이번 게임 순위와 해당 보드 역대 TOP 10이 함께 공개됩니다.
+9. `같은 이미지로 다시 하기`는 이미지와 역대 기록을 유지하고 학생별 카드 위치만 다시 섞습니다.
+10. `새 이미지로 게임하기`는 현재 이미지 파일과 개인 카드판을 정리하지만 역대 기록은 유지합니다.
+
+학생:
+
+1. 게임 생성 후 보이지 않는 상태로 이미지를 미리 불러옵니다. 준비가 끝나면 교사 화면에 준비 완료로 표시됩니다.
+2. 카드 두 장을 눌러 같은 이미지면 계속 공개하고, 다르면 약 0.85초 뒤 다시 뒤집습니다.
+3. 비교 한 번마다 시도 횟수가 1회 증가합니다. 판정 중에는 세 번째 카드를 누를 수 없습니다.
+4. 카드 배열, 맞힌 짝, 시도 횟수는 `memoryPrivate/방코드/게임ID/학생ID`에 저장되어 새로고침 후에도 복구됩니다.
+5. 모든 짝을 찾으면 기록이 확정됩니다. 결과 공개 전에는 다른 학생 기록, 현재 순위, 신기록 여부가 보이지 않습니다.
+
+역대 기록:
+
+- `memoryRecords/2x2`, `memoryRecords/4x4`, `memoryRecords/6x6` 경로에 학생 ID별 최고 기록 한 개만 저장합니다.
+- 결과 공개 시 현재 게임의 모든 완료 기록을 한 번의 Firebase 트랜잭션으로 합쳐 동시 갱신 누락을 막습니다.
+- 느린 새 기록은 기존 개인 최고를 덮지 않습니다. 빠른 기록만 교체되고 TOP 10, 순위 상승, 역대 1위 여부를 다시 계산합니다.
+- 교사는 설정 화면의 `역대 랭킹 보기`에서 보드별 기록을 확인하거나 강한 확인 절차 후 초기화할 수 있습니다.
+
+보안 참고: 개인 카드판은 방 전체 구독에서 분리해 다른 학생 기기로 자동 전송하지 않습니다. 다만 현재 앱은 Firebase Authentication이 없는 공개형 수업 MVP이므로 개발자 도구를 이용한 고의적인 데이터 접근과 기록 조작을 완전히 막을 수는 없습니다. 공식 대회나 장기 공개 서비스에서는 학생 인증, 교사 권한, App Check, Cloud Functions 기반 완료 검증을 추가해야 합니다.
+
+## 12. 초기화 버튼 차이
+
+- 게임 초기화: 점수와 답변, 진행 상태, 마피아 유령 목록, 유령 빙고, 유령 채팅, 현재 메모리 배틀 이미지와 개인 카드판을 지웁니다. 학생 목록과 제출 자료, 메모리 배틀 역대 기록은 유지됩니다.
+- 학생/자료 목록 초기화: 학생 목록, 문제 목록, 칭찬 카드, 마피아·라이어게임·캐치마인드·자리바꾸기·현재 메모리 배틀 진행 데이터, 유령 데이터, 답변, 점수, 진행 상태를 모두 지웁니다. 메모리 배틀 역대 기록은 별도 초기화 버튼을 사용해야 삭제됩니다.
+
+## 13. 보안 주의사항
 
 현재 MVP는 정적 웹앱이고 Realtime Database를 방 단위로 구독합니다. 그래서 생존자 화면에는 유령 채팅 UI를 렌더링하지 않지만, Firebase 규칙과 인증을 세밀하게 나누지 않는 한 개발자 도구 수준에서 데이터를 완전히 숨기는 구조는 아닙니다.
 
@@ -441,9 +491,11 @@ rooms
 
 자리바꾸기 게임도 화면에서는 최종 공개 전 자리 주인을 숨기지만, 현재 공개형 방 규칙에서는 개발자 도구로 원본 배정 데이터를 조사하는 것까지 막을 수 없습니다.
 
+메모리 배틀 이미지는 방 코드와 게임 ID 경로의 Firebase Storage에 저장되며 현재 규칙은 인증 없는 수업용 접속을 위해 공개 읽기/쓰기를 허용합니다. 링크를 아는 사용자의 접근을 완전히 막는 보안 구조는 아닙니다.
+
 실제 장기 운영용으로 강화하려면 Firebase Authentication으로 학생/교사 계정을 구분하고, 유령 채팅이나 라이어 정답 데이터를 별도 경로로 분리한 뒤 필요한 사용자만 읽을 수 있는 보안 규칙 또는 Cloud Functions 검증을 추가하세요.
 
-## 13. 로컬 테스트 방법
+## 14. 로컬 테스트 방법
 
 미리보기 서버는 자동으로 실행하지 않았습니다. 파일을 받은 뒤 원하는 포트로 직접 정적 서버를 실행하세요.
 
@@ -457,13 +509,14 @@ python -m http.server 5500
 
 ```bash
 node tests/seat-game-smoke.cjs
+node tests/memory-battle-smoke.cjs
 ```
 
-## 14. 배포 방법
+## 15. 배포 방법
 
 GitHub Pages:
 
-1. `index.html`, `style.css`, `app.js`, `firebase-rules.json`, `README.md`를 저장소에 올립니다.
+1. 프로젝트의 `index.html`, `outputs` 폴더, `tests` 폴더를 저장소에 올립니다.
 2. Settings > Pages로 이동합니다.
 3. Deploy from a branch를 선택합니다.
 4. `main` 브랜치와 `/root`를 선택합니다.
@@ -475,7 +528,7 @@ Netlify:
 2. 파일이 들어 있는 폴더를 끌어다 놓습니다.
 3. 배포 주소를 학생들에게 공유합니다.
 
-## 15. 나중에 추가하면 좋은 기능
+## 16. 나중에 추가하면 좋은 기능
 
 - 교사용 QR 코드 자동 생성
 - Firebase Authentication 기반 교사 권한 분리
@@ -489,6 +542,8 @@ Netlify:
 - 캐치마인드 그림 데이터 자동 정리
 - 자리바꾸기 카드 종류 및 카드 장수 설정
 - 자리바꾸기 전용 인증 및 비공개 데이터 분리
+- 메모리 배틀 Cloud Functions 기반 공식 기록 검증
+- 메모리 배틀 이미지 세트 저장 및 재사용
 - 유령 채팅 메시지 삭제 또는 채팅 잠금
 - 교사용 마피아 진행 로그 다운로드
 - 부적절한 단어 자동 경고

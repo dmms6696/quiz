@@ -11,6 +11,13 @@ import {
   runTransaction,
   serverTimestamp
 } from "https://www.gstatic.com/firebasejs/10.12.5/firebase-database.js";
+import {
+  getStorage,
+  ref as storageRef,
+  uploadBytes,
+  getDownloadURL,
+  deleteObject
+} from "https://www.gstatic.com/firebasejs/10.12.5/firebase-storage.js";
 
 // =========================
 // 수업용 기본 설정
@@ -73,6 +80,12 @@ const MIN_SEAT_CARD_PHASE_SECONDS = 5;
 const MAX_SEAT_CARD_PHASE_SECONDS = 60;
 const SEAT_FINAL_COUNTDOWN_SECONDS = 5;
 const SEAT_REVEAL_INTERVAL_MS = 260;
+const MEMORY_BOARD_SIZES = [2, 4, 6];
+const DEFAULT_MEMORY_BOARD_SIZE = 4;
+const MEMORY_IMAGE_MAX_SIDE = 900;
+const MEMORY_IMAGE_QUALITY = 0.82;
+const MEMORY_COUNTDOWN_MS = 4000;
+const MEMORY_MISMATCH_DELAY_MS = 850;
 const GHOST_BINGO_REQUIRED_CONDITIONS = 8;
 const GHOST_BINGO_FREE_ID = "FREE";
 const GHOST_CHAT_MAX_LENGTH = 100;
@@ -207,6 +220,7 @@ const GHOST_BINGO_CONDITIONS = [
 
 let firebaseApp = null;
 let db = null;
+let storage = null;
 let displayWindow = null;
 
 const state = {
@@ -242,6 +256,21 @@ const state = {
   seatCardTargetMode: false,
   seatCardTargetSeats: [],
   seatInteractionKey: "",
+  serverTimeOffset: 0,
+  memorySettingsDraft: null,
+  memoryImageDraft: [],
+  memoryUploading: false,
+  memoryPlayer: null,
+  unsubscribeMemoryPlayer: null,
+  memoryPlayerSubscriptionKey: "",
+  memoryBoardBusy: false,
+  memoryOpenCards: [],
+  memoryStartWriteKey: "",
+  memoryReadyWriteKey: "",
+  memoryRecordsCache: {},
+  unsubscribeMemoryRecords: null,
+  memoryRecordsVisible: false,
+  memoryResultBusy: false,
   catchmindDrawing: {
     active: false,
     strokeId: "",
@@ -258,6 +287,10 @@ const toastEl = document.querySelector("#toast");
 if (isFirebaseConfigured()) {
   firebaseApp = initializeApp(firebaseConfig);
   db = getDatabase(firebaseApp);
+  storage = getStorage(firebaseApp);
+  onValue(ref(db, ".info/serverTimeOffset"), (snapshot) => {
+    state.serverTimeOffset = Number(snapshot.val() || 0);
+  });
 }
 
 bootApp();
@@ -317,6 +350,9 @@ function renderHome() {
   state.activeView = "home";
   state.seatSettingsDraft = null;
   state.seatInteractionKey = "";
+  clearMemorySubscriptions();
+  clearMemoryImageDraft();
+  state.memorySettingsDraft = null;
 
   const savedRoom = localStorage.getItem("wbq_roomCode") || "";
   const savedName = localStorage.getItem("wbq_studentName") || "";
@@ -413,6 +449,13 @@ function renderHome() {
                     <small>자리를 고르고, 카드를 사용하고, 마지막까지 내 자리를 지켜라!</small>
                   </span>
                 </label>
+                <label class="mode-tile">
+                  <input type="radio" name="teacherMode" value="memory" />
+                  <span>
+                    <strong>메모리 배틀</strong>
+                    <small>카드의 위치를 기억하고 모든 이미지 짝을 가장 빠르게 찾아라!</small>
+                  </span>
+                </label>
               </div>
             </div>
             <div class="button-row">
@@ -453,6 +496,10 @@ function renderStudentRoute() {
     return;
   }
 
+  if (getRoomMode() !== "memory" && state.unsubscribeMemoryPlayer) {
+    clearMemoryPlayerSubscription();
+  }
+
   if (getRoomMode() === "catchmind") {
     renderCatchmindStudentRoute();
     return;
@@ -460,6 +507,11 @@ function renderStudentRoute() {
 
   if (getRoomMode() === "seat") {
     renderSeatStudentRoute();
+    return;
+  }
+
+  if (getRoomMode() === "memory") {
+    renderMemoryStudentRoute();
     return;
   }
 
@@ -1673,6 +1725,11 @@ function renderDisplayRoute(force = false) {
     return;
   }
 
+  if (getRoomMode() === "memory") {
+    renderMemoryDisplay(force);
+    return;
+  }
+
   renderQuizDisplay(force);
 }
 
@@ -1687,6 +1744,8 @@ function renderDisplayShell(viewName, title, subtitle, bodyHtml, afterRender = n
           ? "catchmind-mode"
           : getRoomMode() === "seat"
             ? "seat-mode"
+            : getRoomMode() === "memory"
+              ? "memory-mode"
             : "";
   setView(viewName, `
     <section class="screen display-stage ${modeClass}">
@@ -2039,6 +2098,11 @@ function renderTeacherDashboard(force = true) {
 
   if (getRoomMode() === "seat") {
     renderSeatTeacherDashboard(force);
+    return;
+  }
+
+  if (getRoomMode() === "memory") {
+    renderMemoryTeacherDashboard(force);
     return;
   }
 
@@ -5464,6 +5528,998 @@ function closeSeatConfirmModal() {
   document.querySelector("[data-seat-confirm-modal]")?.remove();
 }
 
+// =========================
+// 메모리 배틀
+// =========================
+
+function getInitialMemoryBattleStateForWrite(boardSize = DEFAULT_MEMORY_BOARD_SIZE) {
+  return {
+    settings: { boardSize: normalizeMemoryBoardSize(boardSize) },
+    gameId: "",
+    imageList: null,
+    participants: null,
+    players: null,
+    gameStartedAt: null,
+    endedAt: null,
+    resultsPublishedAt: null,
+    finalResults: null,
+    hallOfFame: null,
+    resultInsights: null
+  };
+}
+
+function getMemoryBattle() {
+  return state.room?.memoryBattle || getInitialMemoryBattleStateForWrite();
+}
+
+function normalizeMemoryBoardSize(value) {
+  const size = Number(value);
+  return MEMORY_BOARD_SIZES.includes(size) ? size : DEFAULT_MEMORY_BOARD_SIZE;
+}
+
+function getMemoryBoardSize() {
+  return normalizeMemoryBoardSize(getMemoryBattle().settings?.boardSize);
+}
+
+function getMemoryRequiredImageCount(boardSize = getMemoryBoardSize()) {
+  const size = normalizeMemoryBoardSize(boardSize);
+  return (size * size) / 2;
+}
+
+function normalizeFirebaseList(value) {
+  if (Array.isArray(value)) {
+    return value.filter((item) => item !== null && item !== undefined);
+  }
+  return value && typeof value === "object"
+    ? Object.keys(value).sort((a, b) => Number(a) - Number(b)).map((key) => value[key]).filter(Boolean)
+    : [];
+}
+
+function getMemoryImages(sourceGame = getMemoryBattle()) {
+  return normalizeFirebaseList(sourceGame?.imageList).map((image, index) => ({
+    id: String(image.id || `image_${index + 1}`),
+    url: String(image.url || ""),
+    storagePath: String(image.storagePath || "")
+  })).filter((image) => image.url);
+}
+
+function getMemoryParticipants() {
+  const source = getMemoryBattle().participants || {};
+  return Object.entries(source).map(([id, value]) => ({ id, name: cleanText(value?.name || "이름 없음") }));
+}
+
+function getMemoryPlayerSummaries() {
+  return getMemoryBattle().players || {};
+}
+
+function getMemoryTrustedNow() {
+  return Date.now() + Number(state.serverTimeOffset || 0);
+}
+
+function formatMemoryTime(value) {
+  const milliseconds = Math.max(0, Number(value || 0));
+  return `${(milliseconds / 1000).toFixed(2)}초`;
+}
+
+function memoryBoardKey(boardSize = getMemoryBoardSize()) {
+  return `${normalizeMemoryBoardSize(boardSize)}x${normalizeMemoryBoardSize(boardSize)}`;
+}
+
+function compareMemoryRecords(first, second) {
+  const timeDifference = Number(first?.completionTimeMs || Number.MAX_SAFE_INTEGER) - Number(second?.completionTimeMs || Number.MAX_SAFE_INTEGER);
+  if (timeDifference !== 0) return timeDifference;
+  const attemptDifference = Number(first?.attempts || Number.MAX_SAFE_INTEGER) - Number(second?.attempts || Number.MAX_SAFE_INTEGER);
+  if (attemptDifference !== 0) return attemptDifference;
+  return Number(first?.achievedAt || first?.completedAt || Number.MAX_SAFE_INTEGER) - Number(second?.achievedAt || second?.completedAt || Number.MAX_SAFE_INTEGER);
+}
+
+function sortMemoryRecords(records) {
+  const source = Array.isArray(records) ? records : Object.values(records || {});
+  return source.filter((record) => Number(record?.completionTimeMs) >= 0).sort(compareMemoryRecords);
+}
+
+function mergeMemoryBestRecords(records, currentResults, boardKey, gameId, fallbackAchievedAt) {
+  const next = { ...(records || {}) };
+  currentResults.forEach((result) => {
+    const candidate = {
+      playerId: result.playerId,
+      playerName: result.playerName,
+      boardSize: boardKey,
+      completionTimeMs: Number(result.completionTimeMs),
+      attempts: Number(result.attempts || 0),
+      achievedAt: Number(result.completedAt || fallbackAchievedAt),
+      gameId
+    };
+    if (!next[result.playerId] || compareMemoryRecords(candidate, next[result.playerId]) < 0) {
+      next[result.playerId] = candidate;
+    }
+  });
+  return next;
+}
+
+function createMemoryDeck(imageList) {
+  const cards = imageList.flatMap((image) => [
+    { cardId: `${image.id}_a`, imageId: image.id },
+    { cardId: `${image.id}_b`, imageId: image.id }
+  ]);
+  return shuffleArray(cards);
+}
+
+function clearMemorySubscriptions() {
+  if (typeof state.unsubscribeMemoryPlayer === "function") state.unsubscribeMemoryPlayer();
+  if (typeof state.unsubscribeMemoryRecords === "function") state.unsubscribeMemoryRecords();
+  state.unsubscribeMemoryPlayer = null;
+  state.unsubscribeMemoryRecords = null;
+  state.memoryPlayerSubscriptionKey = "";
+  state.memoryPlayer = null;
+}
+
+function clearMemoryPlayerSubscription() {
+  if (typeof state.unsubscribeMemoryPlayer === "function") state.unsubscribeMemoryPlayer();
+  state.unsubscribeMemoryPlayer = null;
+  state.memoryPlayerSubscriptionKey = "";
+  state.memoryPlayer = null;
+  state.memoryOpenCards = [];
+  state.memoryBoardBusy = false;
+}
+
+function clearMemoryImageDraft() {
+  state.memoryImageDraft.forEach((image) => {
+    if (image.previewUrl) URL.revokeObjectURL(image.previewUrl);
+  });
+  state.memoryImageDraft = [];
+}
+
+function ensureMemoryPlayerSubscription() {
+  const gameId = String(getMemoryBattle().gameId || "");
+  if (!db || state.role !== "student" || !state.studentId || !gameId) return;
+  const key = `${state.roomCode}:${gameId}:${state.studentId}`;
+  if (state.memoryPlayerSubscriptionKey === key) return;
+  if (typeof state.unsubscribeMemoryPlayer === "function") state.unsubscribeMemoryPlayer();
+  state.memoryPlayerSubscriptionKey = key;
+  state.memoryPlayer = null;
+  state.memoryOpenCards = [];
+  state.memoryBoardBusy = false;
+  state.unsubscribeMemoryPlayer = onValue(ref(db, `memoryPrivate/${state.roomCode}/${gameId}/${state.studentId}`), (snapshot) => {
+    state.memoryPlayer = snapshot.val();
+    if (getRoomMode() === "memory" && state.role === "student") renderMemoryStudentRoute();
+  });
+}
+
+function ensureMemoryRecordsSubscription() {
+  if (!db || state.role !== "teacher" || state.unsubscribeMemoryRecords) return;
+  state.unsubscribeMemoryRecords = onValue(ref(db, "memoryRecords"), (snapshot) => {
+    state.memoryRecordsCache = snapshot.val() || {};
+    if (getRoomMode() === "memory" && state.role === "teacher" && state.memoryRecordsVisible) {
+      renderMemoryTeacherDashboard(true);
+    }
+  });
+}
+
+function renderMemoryStudentRoute() {
+  const status = state.room?.status || "waiting";
+  const game = getMemoryBattle();
+  if (!game.gameId || status === "waiting") {
+    renderMemoryStudentWaiting();
+    return;
+  }
+  if (!game.participants?.[state.studentId]) {
+    renderMemoryLateJoinWaiting();
+    return;
+  }
+  ensureMemoryPlayerSubscription();
+  if (status === "memoryReady") {
+    renderMemoryStudentReady();
+    return;
+  }
+  if (status === "memoryCountdown") {
+    const startsAt = Number(game.gameStartedAt || 0);
+    if (startsAt && getMemoryTrustedNow() >= startsAt) {
+      ensureMemoryPlayingStarted();
+      renderMemoryStudentGame();
+    } else {
+      renderMemoryStudentCountdown();
+    }
+    return;
+  }
+  if (status === "memoryPlaying") {
+    renderMemoryStudentGame();
+    return;
+  }
+  if (status === "memoryAwaitingResults") {
+    renderMemoryStudentResultWaiting();
+    return;
+  }
+  if (status === "finished") {
+    renderMemoryFinalResult("student-memory-final", false, true);
+    return;
+  }
+  renderMemoryStudentWaiting();
+}
+
+function renderMemoryLateJoinWaiting() {
+  setView(`student-memory-late-${getMemoryBattle().gameId}`, `
+    <section class="screen memory-mode"><section class="panel memory-panel result-panel"><span class="pill gold">다음 게임 대기</span><h1>이번 메모리 배틀은 이미 참가 명단이 정해졌습니다.</h1><p class="lead">선생님께 게임을 다시 생성해 달라고 알려 주세요. 다음 게임에는 자동으로 참가할 수 있습니다.</p></section></section>
+  `);
+}
+
+function renderMemoryStudentWaiting() {
+  setView("student-memory-waiting", `
+    <section class="screen memory-mode">
+      <div class="status-bar"><button class="btn ghost" id="backHomeBtn" type="button">처음으로</button><span class="pill blue">방 코드 ${escapeHtml(state.roomCode)}</span></div>
+      <section class="panel memory-panel result-panel">
+        <p class="eyebrow">메모리 배틀</p>
+        <h1>카드의 위치를 기억하고 모든 이미지 짝을 가장 빠르게 찾아라!</h1>
+        <p class="lead">선생님이 게임을 준비하고 있습니다.</p>
+      </section>
+    </section>
+  `, () => document.querySelector("#backHomeBtn")?.addEventListener("click", renderHome));
+}
+
+function renderMemoryStudentReady() {
+  const size = getMemoryBoardSize();
+  const pairs = getMemoryRequiredImageCount(size);
+  const ready = Boolean(getMemoryPlayerSummaries()[state.studentId]?.ready);
+  setView(`student-memory-ready-${getMemoryBattle().gameId}-${ready}`, `
+    <section class="screen memory-mode">
+      <div class="status-bar"><span class="pill blue">${size}×${size}</span><span class="pill ${ready ? "green" : "gold"}">${ready ? "준비 완료" : "이미지 준비 중"}</span></div>
+      <section class="panel memory-panel result-panel">
+        <p class="eyebrow">메모리 배틀</p>
+        <h1>카드의 위치를 기억하고 모든 짝을 찾아보세요.</h1>
+        <div class="stats"><div class="stat"><span class="muted">카드</span><span class="num">${size * size}장</span></div><div class="stat"><span class="muted">짝</span><span class="num">${pairs}쌍</span></div></div>
+        <p class="lead">${ready ? "선생님이 게임을 시작할 때까지 기다려 주세요." : "게임 이미지를 안전하게 불러오는 중입니다."}</p>
+      </section>
+    </section>
+  `, () => preloadMemoryImagesForStudent());
+}
+
+async function preloadMemoryImagesForStudent() {
+  const game = getMemoryBattle();
+  const summary = getMemoryPlayerSummaries()[state.studentId];
+  if (!game.gameId || summary?.ready || state.memoryReadyWriteKey === game.gameId) return;
+  state.memoryReadyWriteKey = game.gameId;
+  try {
+    await Promise.all(getMemoryImages().map((image) => new Promise((resolve, reject) => {
+      const loader = new Image();
+      loader.onload = resolve;
+      loader.onerror = reject;
+      loader.src = image.url;
+    })));
+    await update(ref(db, `rooms/${state.roomCode}/memoryBattle/players/${state.studentId}`), {
+      ready: true,
+      readyAt: serverTimestamp()
+    });
+  } catch (error) {
+    console.error(error);
+    state.memoryReadyWriteKey = "";
+    showToast("이미지를 불러오지 못했습니다. 인터넷 연결을 확인한 뒤 다시 시도합니다.", "error");
+    window.setTimeout(preloadMemoryImagesForStudent, 2500);
+  }
+}
+
+function renderMemoryStudentCountdown() {
+  const startsAt = Number(getMemoryBattle().gameStartedAt || getMemoryTrustedNow() + MEMORY_COUNTDOWN_MS);
+  setView(`student-memory-countdown-${getMemoryBattle().gameId}`, `
+    <section class="screen memory-mode memory-countdown-screen"><section class="panel memory-panel result-panel"><p class="eyebrow">준비하세요!</p><div class="memory-countdown-number" id="memoryCountdownNumber">3</div><h1>카드판이 곧 열립니다.</h1></section></section>
+  `, () => startMemoryCountdownTicker(startsAt));
+}
+
+function startMemoryCountdownTicker(startsAt) {
+  clearTimer();
+  const tick = () => {
+    const remaining = startsAt - getMemoryTrustedNow();
+    const element = document.querySelector("#memoryCountdownNumber");
+    if (element) element.textContent = remaining <= 0 ? "START!" : String(Math.max(1, Math.ceil(remaining / 1000)));
+    if (remaining <= 0) {
+      clearTimer();
+      ensureMemoryPlayingStarted();
+      if (state.role !== "display") {
+        state.activeView = "";
+        renderMemoryStudentRoute();
+      }
+    }
+  };
+  tick();
+  state.timerId = window.setInterval(tick, 100);
+}
+
+async function ensureMemoryPlayingStarted() {
+  const gameId = String(getMemoryBattle().gameId || "");
+  if (!gameId || state.memoryStartWriteKey === gameId) return;
+  state.memoryStartWriteKey = gameId;
+  try {
+    await runTransaction(roomRef(state.roomCode), (room) => {
+      if (!room || room.mode !== "memory" || room.status !== "memoryCountdown" || room.memoryBattle?.gameId !== gameId) return;
+      if (Number(room.memoryBattle.gameStartedAt || 0) > getMemoryTrustedNow()) return;
+      room.status = "memoryPlaying";
+      return room;
+    });
+  } catch (error) {
+    console.error(error);
+  } finally {
+    state.memoryStartWriteKey = "";
+  }
+}
+
+function renderMemoryStudentGame() {
+  const player = state.memoryPlayer;
+  if (!player) {
+    setView("student-memory-board-loading", `<section class="screen memory-mode"><div class="panel"><h2>내 카드판을 불러오는 중입니다.</h2></div></section>`);
+    return;
+  }
+  if (player.completed) {
+    renderMemoryStudentCompleted();
+    return;
+  }
+  const game = getMemoryBattle();
+  const size = getMemoryBoardSize();
+  const matchedPairs = player.matchedPairs || {};
+  const found = Object.keys(matchedPairs).filter((key) => matchedPairs[key]).length;
+  setView(`student-memory-playing-${game.gameId}`, `
+    <section class="screen memory-mode memory-play-screen">
+      <div class="memory-game-toolbar">
+        <strong>${size}×${size} 메모리 배틀</strong>
+        <span>찾은 짝 <b id="memoryFoundCount">${found}</b> / ${getMemoryRequiredImageCount(size)}</span>
+        <span id="memoryElapsed">0.00초</span>
+        <span>시도 <b id="memoryAttemptCount">${Number(player.attempts || 0)}</b>회</span>
+      </div>
+      ${renderMemoryBoard(player, size)}
+      <p class="muted small memory-progress-note">게임 중에는 다른 학생의 기록과 순위를 공개하지 않습니다. 완료 ${getMemoryCompletedCount()} / ${getMemoryParticipants().length}명</p>
+    </section>
+  `, () => {
+    bindMemoryCardButtons();
+    startMemoryElapsedTicker();
+  });
+}
+
+function renderMemoryBoard(player, size) {
+  const cards = normalizeFirebaseList(player.cards);
+  const matched = player.matchedPairs || {};
+  const imageMap = Object.fromEntries(getMemoryImages().map((image) => [image.id, image]));
+  return `<div class="memory-board-wrap"><div class="memory-board memory-board-${size}" style="--memory-size:${size}">${cards.map((card, index) => {
+    const isMatched = Boolean(matched[card.imageId]);
+    const image = imageMap[card.imageId];
+    return `<button class="memory-card ${isMatched ? "is-open is-matched" : ""}" type="button" data-memory-card="${index}" ${isMatched ? "disabled" : ""} aria-label="${isMatched ? "찾은 카드" : "뒤집힌 카드"}"><span class="memory-card-inner"><span class="memory-card-back">?</span><span class="memory-card-front">${image ? `<img src="${escapeAttr(image.url)}" alt="" draggable="false" />` : ""}<span class="memory-match-mark">✓</span></span></span></button>`;
+  }).join("")}</div></div>`;
+}
+
+function bindMemoryCardButtons() {
+  document.querySelectorAll("[data-memory-card]").forEach((button) => {
+    button.addEventListener("click", () => selectMemoryCard(Number(button.dataset.memoryCard)));
+  });
+}
+
+function startMemoryElapsedTicker() {
+  clearTimer();
+  const tick = () => {
+    const element = document.querySelector("#memoryElapsed");
+    if (!element) return;
+    element.textContent = formatMemoryTime(getMemoryTrustedNow() - Number(getMemoryBattle().gameStartedAt || getMemoryTrustedNow()));
+  };
+  tick();
+  state.timerId = window.setInterval(tick, 50);
+}
+
+async function selectMemoryCard(index) {
+  const player = state.memoryPlayer;
+  const cards = normalizeFirebaseList(player?.cards);
+  const card = cards[index];
+  if (!card || state.memoryBoardBusy || player?.completed || state.room?.status !== "memoryPlaying") return;
+  if (player?.matchedPairs?.[card.imageId] || state.memoryOpenCards.includes(index)) return;
+  const button = document.querySelector(`[data-memory-card="${index}"]`);
+  button?.classList.add("is-open", "is-selected");
+  state.memoryOpenCards.push(index);
+  if (state.memoryOpenCards.length < 2) return;
+  state.memoryBoardBusy = true;
+  const [firstIndex, secondIndex] = state.memoryOpenCards;
+  const firstCard = cards[firstIndex];
+  const secondCard = cards[secondIndex];
+  const isMatch = firstCard.imageId === secondCard.imageId;
+  const requiredPairs = getMemoryRequiredImageCount();
+  const gameId = getMemoryBattle().gameId;
+  const completedAt = getMemoryTrustedNow();
+  try {
+    const result = await runTransaction(ref(db, `memoryPrivate/${state.roomCode}/${gameId}/${state.studentId}`), (current) => {
+      if (!current || current.completed) return;
+      const matchedPairs = current.matchedPairs || {};
+      if (isMatch && matchedPairs[firstCard.imageId]) return;
+      current.attempts = Number(current.attempts || 0) + 1;
+      if (isMatch) {
+        current.matchedPairs = { ...matchedPairs, [firstCard.imageId]: true };
+        const matchedCount = Object.keys(current.matchedPairs).filter((key) => current.matchedPairs[key]).length;
+        if (matchedCount === requiredPairs) {
+          current.completed = true;
+          current.completedAt = serverTimestamp();
+          current.completionTimeMs = Math.max(0, completedAt - Number(getMemoryBattle().gameStartedAt || completedAt));
+        }
+      }
+      current.updatedAt = completedAt;
+      return current;
+    });
+    if (!result.committed) throw new Error("카드 상태가 이미 변경되었습니다.");
+    const updatedPlayer = result.snapshot.val();
+    state.memoryPlayer = updatedPlayer;
+    const matchedCount = Object.keys(updatedPlayer.matchedPairs || {}).filter((key) => updatedPlayer.matchedPairs[key]).length;
+    await update(ref(db, `rooms/${state.roomCode}/memoryBattle/players/${state.studentId}`), {
+      attempts: Number(updatedPlayer.attempts || 0),
+      matchedCount,
+      completed: Boolean(updatedPlayer.completed),
+      completedAt: updatedPlayer.completedAt || null,
+      completionTimeMs: updatedPlayer.completionTimeMs || null
+    });
+    document.querySelector("#memoryAttemptCount")?.replaceChildren(document.createTextNode(String(updatedPlayer.attempts || 0)));
+    document.querySelector("#memoryFoundCount")?.replaceChildren(document.createTextNode(String(matchedCount)));
+    if (isMatch) {
+      [firstIndex, secondIndex].forEach((cardIndex) => document.querySelector(`[data-memory-card="${cardIndex}"]`)?.classList.add("is-matched"));
+      state.memoryOpenCards = [];
+      state.memoryBoardBusy = false;
+      if (updatedPlayer.completed) {
+        await maybeMarkMemoryAllComplete();
+        state.activeView = "";
+        renderMemoryStudentCompleted();
+      }
+      return;
+    }
+    window.setTimeout(() => {
+      [firstIndex, secondIndex].forEach((cardIndex) => document.querySelector(`[data-memory-card="${cardIndex}"]`)?.classList.remove("is-open", "is-selected"));
+      state.memoryOpenCards = [];
+      state.memoryBoardBusy = false;
+    }, MEMORY_MISMATCH_DELAY_MS);
+  } catch (error) {
+    console.error(error);
+    state.memoryOpenCards = [];
+    state.memoryBoardBusy = false;
+    showToast("카드 상태를 저장하지 못했습니다. 잠시 후 다시 눌러 주세요.", "error");
+    state.activeView = "";
+    renderMemoryStudentRoute();
+  }
+}
+
+function renderMemoryStudentCompleted() {
+  const player = state.memoryPlayer || {};
+  setView(`student-memory-completed-${getMemoryBattle().gameId}`, `
+    <section class="screen memory-mode"><section class="panel memory-panel result-panel"><span class="pill green">완료</span><h1>모든 짝을 찾았습니다!</h1><div class="stats"><div class="stat"><span class="muted">내 기록</span><span class="num">${formatMemoryTime(player.completionTimeMs)}</span></div><div class="stat"><span class="muted">시도 횟수</span><span class="num">${Number(player.attempts || 0)}회</span></div></div><p class="lead">다른 학생들이 게임을 진행하고 있습니다.</p><p class="muted">완료 ${getMemoryCompletedCount()} / ${getMemoryParticipants().length}명 · 결과 공개 전에는 순위가 보이지 않습니다.</p></section></section>
+  `);
+}
+
+function renderMemoryStudentResultWaiting() {
+  const player = state.memoryPlayer || {};
+  setView(`student-memory-result-wait-${getMemoryBattle().gameId}-${Boolean(player.completed)}`, `
+    <section class="screen memory-mode"><section class="panel memory-panel result-panel"><span class="pill gold">게임 종료</span><h1>${player.completed ? "기록이 저장되었습니다." : "이번 게임이 종료되었습니다."}</h1>${player.completed ? `<div class="stats"><div class="stat"><span class="muted">내 기록</span><span class="num">${formatMemoryTime(player.completionTimeMs)}</span></div><div class="stat"><span class="muted">시도</span><span class="num">${Number(player.attempts || 0)}회</span></div></div>` : `<div class="notice warn">완료하지 못한 기록은 역대 기록에 반영되지 않습니다.</div>`}<p class="lead">선생님의 최종 결과 공개를 기다려 주세요.</p></section></section>
+  `);
+}
+
+function getMemoryCompletedCount() {
+  return Object.values(getMemoryPlayerSummaries()).filter((player) => player?.completed).length;
+}
+
+async function maybeMarkMemoryAllComplete() {
+  try {
+    await runTransaction(roomRef(state.roomCode), (room) => {
+      if (!room || room.mode !== "memory" || room.status !== "memoryPlaying") return;
+      const participants = Object.keys(room.memoryBattle?.participants || {});
+      const players = room.memoryBattle?.players || {};
+      if (!participants.length || !participants.every((id) => players[id]?.completed)) return;
+      room.status = "memoryAwaitingResults";
+      room.memoryBattle.endedAt = getMemoryTrustedNow();
+      return room;
+    });
+  } catch (error) {
+    console.error(error);
+  }
+}
+
+function renderMemoryTeacherDashboard(force = true) {
+  ensureMemoryRecordsSubscription();
+  const game = getMemoryBattle();
+  const status = state.room?.status || "waiting";
+  if (status === "finished" && game.resultsPublishedAt) {
+    renderMemoryFinalResult("teacher-memory-final", true, force);
+    return;
+  }
+  if (!game.gameId || status === "waiting") {
+    renderMemoryTeacherSetup(force);
+    return;
+  }
+  renderMemoryTeacherProgress(force);
+}
+
+function renderMemoryTeacherSetup(force = true) {
+  const storedSize = getMemoryBoardSize();
+  if (!state.memorySettingsDraft) state.memorySettingsDraft = { boardSize: storedSize };
+  const size = normalizeMemoryBoardSize(state.memorySettingsDraft.boardSize);
+  const required = getMemoryRequiredImageCount(size);
+  const connectedStudents = getStudents().filter((student) => student.connected);
+  setView(`teacher-memory-setup-${size}-${state.memoryImageDraft.length}-${state.memoryUploading}-${state.memoryRecordsVisible}`, `
+    <section class="screen memory-mode">
+      ${renderMemoryTeacherHeader("게임 설정")}
+      ${renderTeacherModeControls()}
+      <div class="grid-2 memory-setup-layout">
+        <section class="panel memory-panel">
+          <p class="eyebrow">1. 보드 크기</p>
+          <div class="segmented memory-size-picker">${MEMORY_BOARD_SIZES.map((boardSize) => `<button class="btn ${size === boardSize ? "primary" : "ghost"}" data-memory-size="${boardSize}" type="button">${boardSize}×${boardSize}</button>`).join("")}</div>
+          <div class="stats"><div class="stat"><span class="muted">필요 이미지</span><span class="num">${required}장</span></div><div class="stat"><span class="muted">생성 카드</span><span class="num">${size * size}장</span></div></div>
+          <p class="eyebrow">2. 이미지 직접 업로드</p>
+          <label class="btn dark memory-file-button">이미지 추가<input id="memoryImageInput" type="file" accept="image/jpeg,image/png,image/webp,.jpg,.jpeg,.png,.webp" multiple /></label>
+          <p class="muted small">JPG, JPEG, PNG, WEBP · 여러 장을 한 번에 선택할 수 있습니다.</p>
+          <div class="notice ${state.memoryImageDraft.length === required ? "success" : state.memoryImageDraft.length > required ? "danger" : "info"}"><strong>등록된 이미지 ${state.memoryImageDraft.length} / ${required}장</strong><br />현재 생성 가능 카드 ${state.memoryImageDraft.length * 2}장 · ${size}×${size}는 총 ${size * size}장이 필요합니다.<br />업로드한 이미지마다 동일한 카드가 2장씩 생성됩니다.</div>
+          <div class="button-row"><button class="btn success" data-action="memory-create" type="button" ${state.memoryImageDraft.length === required && connectedStudents.length && !state.memoryUploading ? "" : "disabled"}>${state.memoryUploading ? "업로드 중..." : "게임 생성"}</button><button class="btn ghost" data-action="memory-toggle-records" type="button">${state.memoryRecordsVisible ? "역대 랭킹 닫기" : "역대 랭킹 보기"}</button></div>
+        </section>
+        <section class="panel">
+          <p class="eyebrow">이미지 미리보기</p>
+          ${state.memoryImageDraft.length ? `<div class="memory-upload-grid">${state.memoryImageDraft.map((image, index) => `<article class="memory-upload-card"><img src="${escapeAttr(image.previewUrl)}" alt="업로드 이미지 ${index + 1}" /><p title="${escapeAttr(image.name)}">${escapeHtml(image.name)}</p><button class="btn danger small" data-memory-remove-image="${index}" type="button">삭제</button></article>`).join("")}</div>` : `<div class="empty">아직 선택한 이미지가 없습니다.</div>`}
+          <p class="eyebrow">현재 참가 학생</p>
+          <p><strong>${connectedStudents.length}명</strong> 접속 중</p>
+          ${renderStudentList(connectedStudents)}
+        </section>
+      </div>
+      ${state.memoryRecordsVisible ? renderMemoryRecordsManager(size) : ""}
+    </section>
+  `, bindMemoryTeacherSetup, force);
+}
+
+function renderMemoryTeacherHeader(subtitle) {
+  return `<div class="status-bar"><div><p class="eyebrow">교사 화면 · 메모리 배틀</p><h1>${escapeHtml(subtitle)}</h1></div><div class="button-row"><button class="btn dark" data-action="open-display" type="button">교실 화면 열기</button><button class="btn ghost" id="backHomeBtn" type="button">처음으로</button></div></div><section class="panel"><div class="status-bar"><div><p class="muted small">학생들에게 알려 줄 방 코드</p><div class="room-code">${escapeHtml(state.roomCode)}</div></div><button class="btn ghost" id="copyRoomCodeBtn" type="button">코드 복사</button></div></section>`;
+}
+
+function bindMemoryTeacherCommon() {
+  document.querySelector("#backHomeBtn")?.addEventListener("click", renderHome);
+  document.querySelector("#copyRoomCodeBtn")?.addEventListener("click", copyRoomCode);
+  document.querySelectorAll("[data-switch-mode]").forEach((button) => button.addEventListener("click", () => switchRoomMode(button.dataset.switchMode)));
+  document.querySelectorAll("[data-action]").forEach((button) => button.addEventListener("click", () => handleTeacherAction(button.dataset.action)));
+}
+
+function bindMemoryTeacherSetup() {
+  bindMemoryTeacherCommon();
+  document.querySelectorAll("[data-memory-size]").forEach((button) => button.addEventListener("click", () => {
+    state.memorySettingsDraft = { boardSize: Number(button.dataset.memorySize) };
+    renderMemoryTeacherSetup(true);
+  }));
+  document.querySelector("#memoryImageInput")?.addEventListener("change", handleMemoryImageFiles);
+  document.querySelectorAll("[data-memory-remove-image]").forEach((button) => button.addEventListener("click", () => removeMemoryDraftImage(Number(button.dataset.memoryRemoveImage))));
+  document.querySelectorAll("[data-memory-record-size]").forEach((button) => button.addEventListener("click", () => {
+    state.memorySettingsDraft = { boardSize: Number(button.dataset.memoryRecordSize) };
+    renderMemoryTeacherSetup(true);
+  }));
+}
+
+async function handleMemoryImageFiles(event) {
+  const files = [...(event.target.files || [])];
+  if (!files.length) return;
+  const existingSignatures = new Set(state.memoryImageDraft.map((image) => image.signature));
+  let duplicateCount = 0;
+  for (const file of files) {
+    const signature = `${file.name}:${file.size}:${file.lastModified}`;
+    if (existingSignatures.has(signature)) {
+      duplicateCount += 1;
+      continue;
+    }
+    try {
+      const optimized = await optimizeMemoryImage(file);
+      state.memoryImageDraft.push({ ...optimized, signature, name: file.name });
+      existingSignatures.add(signature);
+    } catch (error) {
+      console.error(error);
+      showToast(`${file.name} 파일을 이미지로 처리하지 못했습니다.`, "error");
+    }
+  }
+  if (duplicateCount) showToast(`같은 파일 ${duplicateCount}개는 중복 추가하지 않았습니다.`);
+  renderMemoryTeacherSetup(true);
+}
+
+async function optimizeMemoryImage(file) {
+  const allowed = new Set(["image/jpeg", "image/png", "image/webp"]);
+  if (!allowed.has(file.type)) throw new Error("지원하지 않는 이미지 형식");
+  const bitmap = await loadMemoryImageSource(file);
+  const scale = Math.min(1, MEMORY_IMAGE_MAX_SIDE / Math.max(bitmap.width, bitmap.height));
+  const width = Math.max(1, Math.round(bitmap.width * scale));
+  const height = Math.max(1, Math.round(bitmap.height * scale));
+  const canvas = document.createElement("canvas");
+  canvas.width = width;
+  canvas.height = height;
+  const context = canvas.getContext("2d", { alpha: false });
+  context.fillStyle = "#ffffff";
+  context.fillRect(0, 0, width, height);
+  context.drawImage(bitmap, 0, 0, width, height);
+  if (typeof bitmap.close === "function") bitmap.close();
+  let blob = await new Promise((resolve) => canvas.toBlob(resolve, "image/webp", MEMORY_IMAGE_QUALITY));
+  let contentType = "image/webp";
+  let extension = "webp";
+  if (!blob) {
+    blob = await new Promise((resolve) => canvas.toBlob(resolve, "image/jpeg", MEMORY_IMAGE_QUALITY));
+    contentType = "image/jpeg";
+    extension = "jpg";
+  }
+  if (!blob) throw new Error("이미지 압축 실패");
+  return { blob, contentType, extension, previewUrl: URL.createObjectURL(blob), width, height, bytes: blob.size };
+}
+
+async function loadMemoryImageSource(file) {
+  if (typeof createImageBitmap === "function") {
+    try {
+      return await createImageBitmap(file, { imageOrientation: "from-image" });
+    } catch {
+      return createImageBitmap(file);
+    }
+  }
+  return new Promise((resolve, reject) => {
+    const image = new Image();
+    const url = URL.createObjectURL(file);
+    image.onload = () => { URL.revokeObjectURL(url); resolve(image); };
+    image.onerror = () => { URL.revokeObjectURL(url); reject(new Error("이미지 읽기 실패")); };
+    image.src = url;
+  });
+}
+
+function removeMemoryDraftImage(index) {
+  const [removed] = state.memoryImageDraft.splice(index, 1);
+  if (removed?.previewUrl) URL.revokeObjectURL(removed.previewUrl);
+  renderMemoryTeacherSetup(true);
+}
+
+async function createMemoryGame() {
+  if (!storage) {
+    showToast("Firebase Storage 설정이 필요합니다. README의 메모리 배틀 설정을 확인해 주세요.", "error");
+    return;
+  }
+  const size = normalizeMemoryBoardSize(state.memorySettingsDraft?.boardSize);
+  const required = getMemoryRequiredImageCount(size);
+  if (state.memoryImageDraft.length !== required) {
+    showToast(`${size}×${size} 게임에는 이미지 ${required}장이 필요합니다. 현재 ${state.memoryImageDraft.length}장이 등록되어 있습니다.`, "error");
+    return;
+  }
+  const participants = getStudents().filter((student) => student.connected);
+  if (!participants.length) {
+    showToast("접속 중인 학생이 한 명 이상 있어야 게임을 생성할 수 있습니다.", "error");
+    return;
+  }
+  state.memoryUploading = true;
+  renderMemoryTeacherSetup(true);
+  const gameId = `memory_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+  const uploaded = [];
+  try {
+    for (let index = 0; index < state.memoryImageDraft.length; index += 1) {
+      const source = state.memoryImageDraft[index];
+      const imageId = `image_${index + 1}`;
+      const path = `memory-battle/${state.roomCode}/${gameId}/${imageId}.${source.extension || "webp"}`;
+      const target = storageRef(storage, path);
+      await uploadBytes(target, source.blob, { contentType: source.contentType || "image/webp", cacheControl: "public,max-age=3600" });
+      uploaded.push({ id: imageId, url: await getDownloadURL(target), storagePath: path });
+    }
+    await writeNewMemorySession({ gameId, boardSize: size, imageList: uploaded, participants });
+    clearMemoryImageDraft();
+    state.memoryUploading = false;
+    openDisplayWindow({ silent: true });
+    showToast("메모리 배틀을 생성했습니다. 학생 이미지 준비 상태를 확인해 주세요.", "success");
+  } catch (error) {
+    console.error(error);
+    state.memoryUploading = false;
+    await cleanupMemoryStorageImages(uploaded);
+    showToast("이미지 업로드 또는 게임 생성에 실패했습니다. Storage 설정과 규칙을 확인해 주세요.", "error");
+    renderMemoryTeacherSetup(true);
+  }
+}
+
+async function writeNewMemorySession({ gameId, boardSize, imageList, participants }) {
+  const participantMap = {};
+  const playerMap = {};
+  const updates = {};
+  participants.forEach((student) => {
+    participantMap[student.id] = { name: student.name };
+    playerMap[student.id] = { name: student.name, ready: false, completed: false, attempts: 0, matchedCount: 0 };
+    updates[`memoryPrivate/${state.roomCode}/${gameId}/${student.id}`] = {
+      playerId: student.id,
+      playerName: student.name,
+      gameId,
+      boardSize,
+      cards: createMemoryDeck(imageList),
+      matchedPairs: {},
+      attempts: 0,
+      completed: false,
+      createdAt: getMemoryTrustedNow()
+    };
+  });
+  updates[`rooms/${state.roomCode}/status`] = "memoryReady";
+  updates[`rooms/${state.roomCode}/finishedAt`] = null;
+  updates[`rooms/${state.roomCode}/memoryBattle`] = {
+    settings: { boardSize },
+    gameId,
+    imageList,
+    participants: participantMap,
+    players: playerMap,
+    createdAt: getMemoryTrustedNow(),
+    gameStartedAt: null,
+    endedAt: null,
+    resultsPublishedAt: null,
+    finalResults: null,
+    hallOfFame: null,
+    resultInsights: null
+  };
+  await update(ref(db), updates);
+}
+
+function renderMemoryTeacherProgress(force = true) {
+  const game = getMemoryBattle();
+  const status = state.room.status;
+  const participants = getMemoryParticipants();
+  const summaries = getMemoryPlayerSummaries();
+  const readyCount = participants.filter((student) => summaries[student.id]?.ready).length;
+  const completed = getCompletedMemoryResults();
+  const playing = participants.filter((student) => !summaries[student.id]?.completed);
+  setView(`teacher-memory-progress-${game.gameId}-${status}-${readyCount}-${completed.length}`, `
+    <section class="screen memory-mode">
+      ${renderMemoryTeacherHeader(`${getMemoryBoardSize()}×${getMemoryBoardSize()} 메모리 배틀`)}
+      <section class="panel memory-panel">
+        <div class="status-bar"><div><span class="pill ${statusPillClass(status)}">${statusLabel(status)}</span><h2>${memoryTeacherStatusTitle(status)}</h2></div>${renderMemoryTeacherActions(status, readyCount, participants.length)}</div>
+        <div class="stats"><div class="stat"><span class="muted">참가 학생</span><span class="num">${participants.length}명</span></div><div class="stat"><span class="muted">준비 완료</span><span class="num">${readyCount} / ${participants.length}</span></div><div class="stat"><span class="muted">게임 완료</span><span class="num">${completed.length} / ${participants.length}</span></div><div class="stat"><span class="muted">경과 시간</span><span class="num" id="memoryTeacherElapsed">${game.gameStartedAt ? formatMemoryTime(getMemoryTrustedNow() - game.gameStartedAt) : "-"}</span></div></div>
+      </section>
+      <div class="grid-2">
+        <section class="panel"><h2>학생별 상태</h2><div class="memory-player-list">${participants.map((student) => {
+          const summary = summaries[student.id] || {};
+          const text = summary.completed ? `${formatMemoryTime(summary.completionTimeMs)} · ${Number(summary.attempts || 0)}회` : summary.ready ? (status === "memoryReady" ? "준비 완료" : "게임 중") : "이미지 불러오는 중";
+          return `<div class="memory-player-row"><strong>${escapeHtml(student.name)}</strong><span class="pill ${summary.completed ? "green" : summary.ready ? "blue" : "gold"}">${text}</span></div>`;
+        }).join("")}</div></section>
+        <section class="panel"><h2>현재 진행 요약</h2>${completed.length ? `<h3>완료</h3>${renderMemoryRanking(completed, "")}` : `<div class="empty">아직 완료한 학생이 없습니다.</div>`}<h3>게임 중</h3>${playing.length ? `<div class="tag-list">${playing.map((student) => `<span class="tag">${escapeHtml(student.name)}</span>`).join("")}</div>` : `<p class="muted">모든 참가 학생이 완료했습니다.</p>`}</section>
+      </div>
+    </section>
+  `, () => {
+    bindMemoryTeacherCommon();
+    if (status === "memoryCountdown" || status === "memoryPlaying") startMemoryTeacherElapsedTicker();
+  }, force);
+}
+
+function memoryTeacherStatusTitle(status) {
+  return ({ memoryReady: "학생 이미지 준비 상태를 확인하세요.", memoryCountdown: "게임 시작 카운트다운 중입니다.", memoryPlaying: "학생들이 각자의 카드판을 풀고 있습니다.", memoryAwaitingResults: "최종 결과 공개를 준비했습니다." })[status] || "메모리 배틀";
+}
+
+function renderMemoryTeacherActions(status, readyCount, totalCount) {
+  if (status === "memoryReady") return `<div class="button-row"><button class="btn success" data-action="memory-start" type="button">게임 시작${readyCount < totalCount ? ` (${readyCount}/${totalCount} 준비)` : ""}</button><button class="btn ghost" data-action="memory-new-images" type="button">새 이미지로 게임하기</button></div>`;
+  if (status === "memoryCountdown" || status === "memoryPlaying") return `<div class="button-row"><button class="btn danger" data-action="memory-end" type="button">게임 종료</button></div>`;
+  if (status === "memoryAwaitingResults") return `<div class="button-row"><button class="btn success" data-action="memory-reveal" type="button">최종 결과 공개</button></div>`;
+  return "";
+}
+
+function startMemoryTeacherElapsedTicker() {
+  clearTimer();
+  const tick = () => {
+    const element = document.querySelector("#memoryTeacherElapsed");
+    if (element && getMemoryBattle().gameStartedAt) element.textContent = formatMemoryTime(getMemoryTrustedNow() - getMemoryBattle().gameStartedAt);
+    if (state.room?.status === "memoryCountdown" && getMemoryTrustedNow() >= Number(getMemoryBattle().gameStartedAt || Infinity)) ensureMemoryPlayingStarted();
+  };
+  tick();
+  state.timerId = window.setInterval(tick, 100);
+}
+
+async function startMemoryGame() {
+  const participants = getMemoryParticipants();
+  const readyCount = participants.filter((student) => getMemoryPlayerSummaries()[student.id]?.ready).length;
+  if (!participants.length) return;
+  if (readyCount < participants.length && !window.confirm(`아직 ${participants.length - readyCount}명의 이미지 준비가 완료되지 않았습니다. 그래도 시작할까요?`)) return;
+  openDisplayWindow({ silent: true });
+  const startedAt = getMemoryTrustedNow() + MEMORY_COUNTDOWN_MS;
+  try {
+    await update(roomRef(state.roomCode), {
+      status: "memoryCountdown",
+      "memoryBattle/countdownStartedAt": serverTimestamp(),
+      "memoryBattle/gameStartedAt": startedAt
+    });
+    showToast("메모리 배틀 카운트다운을 시작했습니다.", "success");
+  } catch (error) {
+    console.error(error);
+    showToast("게임을 시작하지 못했습니다.", "error");
+  }
+}
+
+async function endMemoryGame() {
+  const incomplete = getMemoryParticipants().length - getMemoryCompletedCount();
+  const message = incomplete ? `아직 게임을 완료하지 못한 학생이 ${incomplete}명입니다. 게임을 종료할까요?` : "게임을 종료하고 결과 공개를 준비할까요?";
+  if (!window.confirm(message)) return;
+  try {
+    await update(roomRef(state.roomCode), { status: "memoryAwaitingResults", "memoryBattle/endedAt": serverTimestamp() });
+  } catch (error) {
+    console.error(error);
+    showToast("게임을 종료하지 못했습니다.", "error");
+  }
+}
+
+function getCompletedMemoryResults() {
+  const participants = getMemoryParticipants();
+  const summaries = getMemoryPlayerSummaries();
+  return sortMemoryRecords(participants.map((student) => ({
+    playerId: student.id,
+    playerName: student.name,
+    completionTimeMs: Number(summaries[student.id]?.completionTimeMs),
+    attempts: Number(summaries[student.id]?.attempts || 0),
+    completedAt: Number(summaries[student.id]?.completedAt || 0),
+    completed: Boolean(summaries[student.id]?.completed)
+  })).filter((record) => record.completed && Number.isFinite(record.completionTimeMs)));
+}
+
+async function revealMemoryResults() {
+  if (state.memoryResultBusy || getMemoryBattle().resultsPublishedAt) return;
+  state.memoryResultBusy = true;
+  const game = getMemoryBattle();
+  const boardKey = memoryBoardKey();
+  const currentResults = getCompletedMemoryResults();
+  try {
+    const recordsPath = ref(db, `memoryRecords/${boardKey}`);
+    const beforeSnapshot = await get(recordsPath);
+    const beforeMap = beforeSnapshot.val() || {};
+    const beforeRanking = sortMemoryRecords(beforeMap);
+    const transaction = await runTransaction(recordsPath, (records) => {
+      return mergeMemoryBestRecords(records, currentResults, boardKey, game.gameId, getMemoryTrustedNow());
+    });
+    const afterMap = transaction.snapshot.val() || {};
+    const afterRanking = sortMemoryRecords(afterMap);
+    const beforeRanks = Object.fromEntries(beforeRanking.map((record, index) => [record.playerId, index + 1]));
+    const afterRanks = Object.fromEntries(afterRanking.map((record, index) => [record.playerId, index + 1]));
+    const resultInsights = {};
+    currentResults.forEach((result) => {
+      const previous = beforeMap[result.playerId] || null;
+      const savedRecord = afterMap[result.playerId];
+      const improved = !previous || compareMemoryRecords(result, previous) < 0;
+      resultInsights[result.playerId] = {
+        firstRecord: !previous,
+        personalBest: Boolean(previous && improved),
+        previousTimeMs: previous?.completionTimeMs || null,
+        savedTimeMs: improved && previous ? Math.max(0, Number(previous.completionTimeMs) - result.completionTimeMs) : 0,
+        beforeRank: beforeRanks[result.playerId] || null,
+        afterRank: afterRanks[result.playerId] || null,
+        topTenEntry: Number(beforeRanks[result.playerId] || 99) > 10 && Number(afterRanks[result.playerId] || 99) <= 10,
+        rankUp: Boolean(beforeRanks[result.playerId] <= 10 && afterRanks[result.playerId] < beforeRanks[result.playerId]),
+        allTimeChampion: Boolean(improved && afterRanks[result.playerId] === 1 && savedRecord?.gameId === game.gameId)
+      };
+    });
+    await update(roomRef(state.roomCode), {
+      status: "finished",
+      finishedAt: serverTimestamp(),
+      "memoryBattle/finalResults": currentResults,
+      "memoryBattle/hallOfFame": afterRanking.slice(0, 10),
+      "memoryBattle/resultInsights": resultInsights,
+      "memoryBattle/resultsPublishedAt": serverTimestamp()
+    });
+  } catch (error) {
+    console.error(error);
+    showToast("최종 기록을 반영하지 못했습니다. 다시 시도해 주세요.", "error");
+  } finally {
+    state.memoryResultBusy = false;
+  }
+}
+
+function renderMemoryFinalResult(viewName, showTeacherControls, force = false) {
+  const game = getMemoryBattle();
+  const completed = normalizeFirebaseList(game.finalResults).length ? normalizeFirebaseList(game.finalResults) : getCompletedMemoryResults();
+  const hall = normalizeFirebaseList(game.hallOfFame);
+  const participants = getMemoryParticipants();
+  const completedIds = new Set(completed.map((record) => record.playerId));
+  const incomplete = participants.filter((student) => !completedIds.has(student.id));
+  const ownInsight = game.resultInsights?.[state.studentId] || {};
+  const ownCurrentRank = completed.findIndex((record) => record.playerId === state.studentId) + 1;
+  const ownHallRank = hall.findIndex((record) => record.playerId === state.studentId) + 1;
+  setView(viewName, `
+    <section class="screen memory-mode">
+      <div class="status-bar"><div><span class="pill gold">최종 결과</span><h1>${getMemoryBoardSize()}×${getMemoryBoardSize()} 메모리 배틀</h1></div>${showTeacherControls ? `<div class="button-row"><button class="btn success" data-action="memory-restart-same" type="button">같은 이미지로 다시 하기</button><button class="btn ghost" data-action="memory-new-images" type="button">새 이미지로 게임하기</button><button class="btn dark" id="backHomeBtn" type="button">처음으로</button></div>` : ""}</div>
+      ${!showTeacherControls && ownCurrentRank ? renderMemoryOwnResult(ownCurrentRank, ownHallRank, completed[ownCurrentRank - 1], ownInsight) : ""}
+      <div class="grid-2 memory-results-grid">
+        <section class="panel"><p class="eyebrow">이번 게임 결과</p><h2>현재 참가자 순위</h2>${renderMemoryRanking(completed, state.studentId)}${incomplete.length ? `<h3>미완료</h3><div class="tag-list">${incomplete.map((student) => `<span class="tag">${escapeHtml(student.name)}</span>`).join("")}</div>` : ""}${renderMemoryAwards(completed)}</section>
+        <section class="panel memory-hall-panel"><p class="eyebrow">장기 기록</p><h2>${getMemoryBoardSize()}×${getMemoryBoardSize()} 역대 TOP 10</h2>${renderMemoryRanking(hall, state.studentId)}</section>
+      </div>
+    </section>
+  `, () => {
+    bindMemoryTeacherCommon();
+  }, force);
+}
+
+function renderMemoryOwnResult(currentRank, hallRank, result, insight) {
+  const notices = [];
+  if (insight.allTimeChampion) notices.push("새로운 역대 최고 기록!");
+  else if (insight.topTenEntry) notices.push(`역대 TOP 10 신규 진입 · ${hallRank}위`);
+  if (insight.rankUp) notices.push(`역대 순위 상승 · ${insight.beforeRank}위 → ${insight.afterRank}위`);
+  if (insight.personalBest) notices.push(`개인 신기록 · ${formatMemoryTime(insight.savedTimeMs)} 단축`);
+  if (insight.firstRecord) notices.push(`첫 ${getMemoryBoardSize()}×${getMemoryBoardSize()} 기록 등록`);
+  return `<section class="panel memory-own-result"><p class="eyebrow">내 결과</p><div class="stats"><div class="stat"><span class="muted">이번 게임</span><span class="num">${currentRank}위</span><small>${formatMemoryTime(result.completionTimeMs)}</small></div><div class="stat"><span class="muted">역대 순위</span><span class="num">${hallRank || "TOP 10 밖"}</span></div></div>${notices.length ? `<div class="memory-achievements">${notices.map((notice) => `<strong>${escapeHtml(notice)}</strong>`).join("")}</div>` : ""}</section>`;
+}
+
+function renderMemoryRanking(records, highlightId = "") {
+  if (!records.length) return `<div class="empty">아직 등록된 완료 기록이 없습니다.</div>`;
+  return `<div class="ranking-list">${records.map((record, index) => `<div class="ranking-row memory-rank-${index + 1} ${record.playerId === highlightId ? "me" : ""}"><span class="rank-number">${index < 3 ? ["1위", "2위", "3위"][index] : `${index + 1}위`}</span><strong>${escapeHtml(record.playerName || "이름 없음")}</strong><span>${formatMemoryTime(record.completionTimeMs)}${Number.isFinite(Number(record.attempts)) ? ` · ${Number(record.attempts)}회` : ""}</span></div>`).join("")}</div>`;
+}
+
+function renderMemoryAwards(records) {
+  if (!records.length) return "";
+  const fastest = records[0];
+  const efficient = records.slice().sort((a, b) => Number(a.attempts) - Number(b.attempts) || compareMemoryRecords(a, b))[0];
+  return `<div class="memory-awards"><div class="notice success"><strong>최고 속도</strong><br />${escapeHtml(fastest.playerName)} · ${formatMemoryTime(fastest.completionTimeMs)}</div><div class="notice info"><strong>최소 시도</strong><br />${escapeHtml(efficient.playerName)} · ${Number(efficient.attempts)}회</div></div>`;
+}
+
+function renderMemoryRecordsManager(selectedSize) {
+  const selectedKey = memoryBoardKey(selectedSize);
+  const records = sortMemoryRecords(state.memoryRecordsCache[selectedKey] || {}).slice(0, 10);
+  return `<section class="panel memory-record-manager"><div class="status-bar"><div><p class="eyebrow">역대 기록 관리</p><h2>${selectedSize}×${selectedSize} TOP 10</h2></div><button class="btn danger" data-action="memory-clear-records" type="button">${selectedSize}×${selectedSize} 기록 초기화</button></div><div class="segmented">${MEMORY_BOARD_SIZES.map((size) => `<button class="btn ${size === selectedSize ? "primary" : "ghost"}" data-memory-record-size="${size}" type="button">${size}×${size}</button>`).join("")}</div>${renderMemoryRanking(records)}</section>`;
+}
+
+function toggleMemoryRecords() {
+  state.memoryRecordsVisible = !state.memoryRecordsVisible;
+  renderMemoryTeacherDashboard(true);
+}
+
+async function clearSelectedMemoryRecords() {
+  const size = normalizeMemoryBoardSize(state.memorySettingsDraft?.boardSize);
+  if (!window.confirm(`${size}×${size} 역대 기록을 모두 삭제할까요?\n삭제한 기록은 복구할 수 없습니다.`)) return;
+  if (!window.confirm("정말 기록을 삭제할까요?")) return;
+  try {
+    await remove(ref(db, `memoryRecords/${memoryBoardKey(size)}`));
+    showToast(`${size}×${size} 역대 기록을 초기화했습니다.`, "success");
+  } catch (error) {
+    console.error(error);
+    showToast("역대 기록을 삭제하지 못했습니다.", "error");
+  }
+}
+
+async function restartMemoryGameWithSameImages() {
+  const game = getMemoryBattle();
+  const images = getMemoryImages();
+  const participants = getStudents().filter((student) => student.connected);
+  if (!images.length || !participants.length) {
+    showToast("이미지와 접속 학생을 확인해 주세요.", "error");
+    return;
+  }
+  const oldGameId = game.gameId;
+  const gameId = `memory_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+  try {
+    await writeNewMemorySession({ gameId, boardSize: getMemoryBoardSize(), imageList: images, participants });
+    if (oldGameId) await remove(ref(db, `memoryPrivate/${state.roomCode}/${oldGameId}`));
+    showToast("같은 이미지로 새 게임을 만들었습니다. 카드 위치는 다시 섞였습니다.", "success");
+  } catch (error) {
+    console.error(error);
+    showToast("새 게임을 만들지 못했습니다.", "error");
+  }
+}
+
+async function configureMemoryGameWithNewImages() {
+  if (!window.confirm("현재 게임 이미지를 정리하고 새 이미지 설정으로 돌아갈까요? 역대 기록은 유지됩니다.")) return;
+  const oldGame = getMemoryBattle();
+  try {
+    await update(roomRef(state.roomCode), { status: "waiting", memoryBattle: getInitialMemoryBattleStateForWrite(getMemoryBoardSize()), finishedAt: null });
+    if (oldGame.gameId) await remove(ref(db, `memoryPrivate/${state.roomCode}/${oldGame.gameId}`));
+    await cleanupMemoryStorageImages(getMemoryImages(oldGame));
+    state.memorySettingsDraft = { boardSize: getMemoryBoardSize() };
+    clearMemoryImageDraft();
+    showToast("새 이미지 게임 설정으로 돌아왔습니다. 역대 기록은 유지됩니다.", "success");
+  } catch (error) {
+    console.error(error);
+    showToast("새 이미지 설정으로 이동하지 못했습니다.", "error");
+  }
+}
+
+async function cleanupMemoryStorageImages(images = getMemoryImages()) {
+  if (!storage) return;
+  await Promise.allSettled(images.filter((image) => image.storagePath).map((image) => deleteObject(storageRef(storage, image.storagePath))));
+}
+
+function renderMemoryDisplay(force = false) {
+  const status = state.room?.status || "waiting";
+  const game = getMemoryBattle();
+  const participants = getMemoryParticipants();
+  const ready = participants.filter((student) => getMemoryPlayerSummaries()[student.id]?.ready).length;
+  const completed = getMemoryCompletedCount();
+  let body = "";
+  let afterRender = null;
+  if (status === "finished") {
+    body = `<div class="grid-2 memory-results-grid"><section class="panel"><p class="eyebrow">이번 게임 결과</p>${renderMemoryRanking(normalizeFirebaseList(game.finalResults))}</section><section class="panel"><p class="eyebrow">${getMemoryBoardSize()}×${getMemoryBoardSize()} 역대 TOP 10</p>${renderMemoryRanking(normalizeFirebaseList(game.hallOfFame))}</section></div>`;
+  } else if (status === "memoryCountdown") {
+    body = `<section class="panel memory-panel result-panel"><p class="eyebrow">준비하세요!</p><div class="memory-countdown-number" id="memoryCountdownNumber">3</div><h1>START!</h1></section>`;
+    afterRender = () => startMemoryCountdownTicker(Number(game.gameStartedAt || getMemoryTrustedNow() + MEMORY_COUNTDOWN_MS));
+  } else if (status === "memoryPlaying" || status === "memoryAwaitingResults") {
+    body = `<section class="panel memory-panel result-panel"><span class="pill ${status === "memoryPlaying" ? "green" : "gold"}">${status === "memoryPlaying" ? "게임 진행 중" : "결과 공개 대기"}</span><h1>완료 ${completed} / ${participants.length}명</h1><p class="lead">각자의 카드판에서 모든 이미지 짝을 찾고 있습니다.</p></section>`;
+  } else if (status === "memoryReady") {
+    body = `<section class="panel memory-panel result-panel"><span class="pill blue">${getMemoryBoardSize()}×${getMemoryBoardSize()}</span><h1>게임 준비</h1><div class="stats"><div class="stat"><span class="muted">이미지 준비 완료</span><span class="num">${ready} / ${participants.length}</span></div><div class="stat"><span class="muted">카드</span><span class="num">${getMemoryBoardSize() ** 2}장</span></div></div></section>`;
+  } else {
+    body = `<section class="panel memory-panel result-panel"><h1>메모리 배틀을 준비 중입니다.</h1><p class="lead">방 코드 ${escapeHtml(state.roomCode)}</p></section>`;
+  }
+  renderDisplayShell(`display-memory-${status}-${game.gameId || "setup"}`, "메모리 배틀", "카드의 위치를 기억하고 모든 이미지 짝을 가장 빠르게 찾아라!", body, afterRender, force);
+}
+
 function renderFinalResult(viewName, showTeacherControls, force = false) {
   const ranking = getCumulativeRanking();
   const [first, second, third] = ranking;
@@ -5600,7 +6656,8 @@ async function enterTeacher() {
         mafia: selectedMode === "mafia" ? getDefaultMafiaState() : null,
         liar: selectedMode === "liar" ? getInitialLiarStateForWrite() : null,
         catchmind: selectedMode === "catchmind" ? getInitialCatchmindStateForWrite() : null,
-        seatGame: selectedMode === "seat" ? getInitialSeatGameStateForWrite() : null
+        seatGame: selectedMode === "seat" ? getInitialSeatGameStateForWrite() : null,
+        memoryBattle: selectedMode === "memory" ? getInitialMemoryBattleStateForWrite() : null
       });
     } else {
       const room = snapshot.val();
@@ -5617,6 +6674,7 @@ async function enterTeacher() {
           liar: selectedMode === "liar" ? getInitialLiarStateForWrite() : null,
           catchmind: selectedMode === "catchmind" ? getInitialCatchmindStateForWrite() : null,
           seatGame: selectedMode === "seat" ? getInitialSeatGameStateForWrite() : null,
+          memoryBattle: selectedMode === "memory" ? getInitialMemoryBattleStateForWrite() : null,
           answers: null,
           complimentAnswers: null,
           complimentBonuses: null
@@ -6150,7 +7208,15 @@ function handleTeacherAction(action) {
     "seat-end-card": endSeatCardPhase,
     "seat-final-reveal": revealSeatFinal,
     "seat-restart-same": () => startSeatGame({ reuseSettings: true }),
-    "seat-configure": configureSeatGame
+    "seat-configure": configureSeatGame,
+    "memory-create": createMemoryGame,
+    "memory-start": startMemoryGame,
+    "memory-end": endMemoryGame,
+    "memory-reveal": revealMemoryResults,
+    "memory-restart-same": restartMemoryGameWithSameImages,
+    "memory-new-images": configureMemoryGameWithNewImages,
+    "memory-toggle-records": toggleMemoryRecords,
+    "memory-clear-records": clearSelectedMemoryRecords
   };
   actions[action]?.();
 }
@@ -6978,8 +8044,12 @@ async function resetGame() {
     return;
   }
 
+  const oldMemoryGame = getMemoryBattle();
   state.seatSettingsDraft = null;
   state.seatInteractionKey = "";
+  clearMemorySubscriptions();
+  clearMemoryImageDraft();
+  state.memorySettingsDraft = null;
 
   const updates = {
     status: "waiting",
@@ -6997,6 +8067,7 @@ async function resetGame() {
     liar: getDefaultLiarState(),
     catchmind: getInitialCatchmindStateForWrite(),
     seatGame: getInitialSeatGameStateForWrite(),
+    memoryBattle: getInitialMemoryBattleStateForWrite(),
     answers: null
   };
 
@@ -7006,6 +8077,12 @@ async function resetGame() {
 
   try {
     await update(roomRef(state.roomCode), updates);
+    if (oldMemoryGame.gameId) {
+      await Promise.allSettled([
+        remove(ref(db, `memoryPrivate/${state.roomCode}/${oldMemoryGame.gameId}`)),
+        cleanupMemoryStorageImages(getMemoryImages(oldMemoryGame))
+      ]);
+    }
     showToast("게임이 초기화되었습니다.", "success");
   } catch (error) {
     console.error(error);
@@ -7024,8 +8101,12 @@ async function clearRoomLists() {
     return;
   }
 
+  const oldMemoryGame = getMemoryBattle();
   state.seatSettingsDraft = null;
   state.seatInteractionKey = "";
+  clearMemorySubscriptions();
+  clearMemoryImageDraft();
+  state.memorySettingsDraft = null;
 
   try {
     await update(roomRef(state.roomCode), {
@@ -7046,9 +8127,16 @@ async function clearRoomLists() {
       liar: getDefaultLiarState(),
       catchmind: getInitialCatchmindStateForWrite(),
       seatGame: getInitialSeatGameStateForWrite(),
+      memoryBattle: getInitialMemoryBattleStateForWrite(),
       answers: null,
       complimentAnswers: null
     });
+    if (oldMemoryGame.gameId) {
+      await Promise.allSettled([
+        remove(ref(db, `memoryPrivate/${state.roomCode}/${oldMemoryGame.gameId}`)),
+        cleanupMemoryStorageImages(getMemoryImages(oldMemoryGame))
+      ]);
+    }
     showToast("학생 목록과 제출 자료를 모두 초기화했습니다.", "success");
   } catch (error) {
     console.error(error);
@@ -7170,6 +8258,8 @@ function subscribeToRoom(code) {
           renderCatchmindFinalResult("teacher-catchmind-final", true, true);
         } else if (getRoomMode() === "seat") {
           renderSeatFinalResult("teacher-seat-final", true, true);
+        } else if (getRoomMode() === "memory") {
+          renderMemoryFinalResult("teacher-memory-final", true, true);
         } else {
           renderFinalResult("teacher-final", true, true);
         }
@@ -7205,7 +8295,7 @@ function getSelectedTeacherMode() {
 }
 
 async function switchRoomMode(nextMode) {
-  if (!["quiz", "compliment", "mafia", "liar", "catchmind", "seat"].includes(nextMode)) {
+  if (!["quiz", "compliment", "mafia", "liar", "catchmind", "seat", "memory"].includes(nextMode)) {
     return;
   }
 
@@ -7221,6 +8311,9 @@ async function switchRoomMode(nextMode) {
   try {
     state.seatSettingsDraft = null;
     state.seatInteractionKey = "";
+    clearMemorySubscriptions();
+    clearMemoryImageDraft();
+    state.memorySettingsDraft = null;
     await update(roomRef(state.roomCode), {
       mode: nextMode,
       currentQuestionIndex: -1,
@@ -7232,6 +8325,7 @@ async function switchRoomMode(nextMode) {
       liar: nextMode === "liar" ? getInitialLiarStateForWrite() : null,
       catchmind: nextMode === "catchmind" ? getInitialCatchmindStateForWrite() : null,
       seatGame: nextMode === "seat" ? getInitialSeatGameStateForWrite() : null,
+      memoryBattle: nextMode === "memory" ? getInitialMemoryBattleStateForWrite() : null,
       answers: null,
       complimentAnswers: null,
       complimentBonuses: null
@@ -8668,7 +9762,8 @@ function modeLabel(mode) {
     mafia: "교실 마피아 게임",
     liar: "라이어게임",
     catchmind: "캐치마인드",
-    seat: "자리바꾸기 게임"
+    seat: "자리바꾸기 게임",
+    memory: "메모리 배틀"
   };
   return labels[mode] || "퀴즈 배틀";
 }
@@ -9130,6 +10225,7 @@ function renderTeacherModeControls() {
         <button class="btn ${mode === "liar" ? "primary" : "ghost"}" data-switch-mode="liar" type="button" ${canSwitch ? "" : "disabled"}>라이어게임</button>
         <button class="btn ${mode === "catchmind" ? "primary" : "ghost"}" data-switch-mode="catchmind" type="button" ${canSwitch ? "" : "disabled"}>캐치마인드</button>
         <button class="btn ${mode === "seat" ? "primary" : "ghost"}" data-switch-mode="seat" type="button" ${canSwitch ? "" : "disabled"}>자리바꾸기</button>
+        <button class="btn ${mode === "memory" ? "primary" : "ghost"}" data-switch-mode="memory" type="button" ${canSwitch ? "" : "disabled"}>메모리 배틀</button>
       </div>
       ${canSwitch ? "" : `<p class="muted small">게임 진행 중에는 모드를 바꿀 수 없습니다.</p>`}
     </section>
@@ -9804,6 +10900,10 @@ function statusLabel(status) {
     cardPhase: "카드 활용",
     finalReady: "최종 공개 준비",
     finalReveal: "자리 공개",
+    memoryReady: "이미지 준비",
+    memoryCountdown: "시작 카운트다운",
+    memoryPlaying: "메모리 배틀 진행",
+    memoryAwaitingResults: "결과 공개 준비",
     playing: "진행 중",
     result: "결과 공개",
     targetReveal: "칭찬 대상 공개",
@@ -9830,6 +10930,10 @@ function statusPillClass(status) {
     cardPhase: "gold",
     finalReady: "blue",
     finalReveal: "gold",
+    memoryReady: "blue",
+    memoryCountdown: "gold",
+    memoryPlaying: "green",
+    memoryAwaitingResults: "gold",
     playing: "green",
     result: "gold",
     targetReveal: "gold",

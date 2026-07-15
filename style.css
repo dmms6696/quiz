@@ -985,6 +985,290 @@ button.seat-tile:disabled {
   text-align: center;
 }
 
+.memory-mode .memory-panel {
+  border-top: 5px solid #2f6df6;
+}
+
+.memory-setup-layout {
+  align-items: start;
+}
+
+.memory-size-picker {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.memory-file-button {
+  position: relative;
+  justify-self: start;
+  overflow: hidden;
+}
+
+.memory-file-button input {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.memory-upload-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(118px, 1fr));
+  gap: 10px;
+  max-height: 470px;
+  overflow: auto;
+}
+
+.memory-upload-card {
+  display: grid;
+  gap: 7px;
+  min-width: 0;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #f8fafc;
+  padding: 8px;
+}
+
+.memory-upload-card img {
+  width: 100%;
+  aspect-ratio: 1;
+  border-radius: 6px;
+  background: #fff;
+  object-fit: contain;
+}
+
+.memory-upload-card p {
+  overflow: hidden;
+  font-size: 0.78rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.memory-game-toolbar {
+  display: grid;
+  grid-template-columns: minmax(150px, 1fr) repeat(3, auto);
+  align-items: center;
+  gap: 8px 16px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fff;
+  padding: 10px 14px;
+  box-shadow: var(--shadow);
+}
+
+.memory-game-toolbar strong {
+  font-size: 1.15rem;
+}
+
+.memory-board-wrap {
+  display: grid;
+  place-items: center;
+  min-width: 0;
+}
+
+.memory-board {
+  display: grid;
+  grid-template-columns: repeat(var(--memory-size), minmax(0, 1fr));
+  gap: clamp(4px, 0.8vmin, 9px);
+  width: min(100%, 72dvh, 760px);
+  aspect-ratio: 1;
+}
+
+.memory-card {
+  position: relative;
+  min-width: 0;
+  min-height: 0;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  padding: 0;
+  perspective: 700px;
+  touch-action: manipulation;
+}
+
+.memory-card:disabled {
+  opacity: 1;
+}
+
+.memory-card-inner {
+  position: absolute;
+  inset: 0;
+  display: block;
+  transform-style: preserve-3d;
+  transition: transform 0.24s ease;
+}
+
+.memory-card.is-open .memory-card-inner {
+  transform: rotateY(180deg);
+}
+
+.memory-card-back,
+.memory-card-front {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  overflow: hidden;
+  border: 2px solid #184bbd;
+  border-radius: 8px;
+  backface-visibility: hidden;
+}
+
+.memory-card-back {
+  background:
+    linear-gradient(135deg, rgba(255,255,255,0.16) 25%, transparent 25%) 0 0 / 18px 18px,
+    linear-gradient(315deg, rgba(255,255,255,0.12) 25%, transparent 25%) 0 0 / 18px 18px,
+    #2f6df6;
+  color: #fff;
+  font-size: clamp(1rem, 4vmin, 2.4rem);
+  font-weight: 900;
+}
+
+.memory-card-front {
+  transform: rotateY(180deg);
+  background: #fff;
+  padding: clamp(3px, 0.7vmin, 8px);
+}
+
+.memory-card-front img {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  user-select: none;
+}
+
+.memory-card.is-selected .memory-card-front {
+  border-color: #ffb020;
+  box-shadow: inset 0 0 0 3px rgba(255, 176, 32, 0.28);
+}
+
+.memory-card.is-matched .memory-card-front {
+  border-color: #18a058;
+  box-shadow: inset 0 0 0 3px rgba(24, 160, 88, 0.2);
+}
+
+.memory-match-mark {
+  position: absolute;
+  right: 5px;
+  bottom: 5px;
+  display: none;
+  width: 22px;
+  height: 22px;
+  place-items: center;
+  border-radius: 50%;
+  background: #18a058;
+  color: #fff;
+  font-size: 0.8rem;
+  font-weight: 900;
+}
+
+.memory-card.is-matched .memory-match-mark {
+  display: grid;
+}
+
+.memory-card.is-matched {
+  animation: memory-match-pop 0.28s ease;
+}
+
+@keyframes memory-match-pop {
+  50% { transform: scale(1.035); }
+}
+
+.memory-progress-note {
+  text-align: center;
+}
+
+.memory-countdown-screen {
+  min-height: calc(100dvh - 90px);
+  align-content: center;
+}
+
+.memory-countdown-number {
+  color: #184bbd;
+  font-size: clamp(5rem, 24vw, 12rem);
+  font-weight: 900;
+  line-height: 0.9;
+}
+
+.memory-player-list {
+  display: grid;
+  gap: 8px;
+}
+
+.memory-player-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  border-bottom: 1px solid var(--line);
+  padding: 8px 0;
+}
+
+.memory-player-row strong {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.memory-results-grid {
+  align-items: start;
+}
+
+.memory-hall-panel {
+  border-top: 5px solid #ffb020;
+}
+
+.memory-own-result {
+  border: 2px solid #2f6df6;
+  background: #eef4ff;
+}
+
+.memory-achievements {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.memory-achievements strong {
+  border-radius: 8px;
+  background: #172033;
+  color: #fff;
+  padding: 9px 12px;
+}
+
+.memory-awards {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+  margin-top: 12px;
+}
+
+.memory-record-manager {
+  border-top: 5px solid #ffb020;
+}
+
+.memory-mode .rank-number {
+  font-weight: 900;
+}
+
+.memory-mode .ranking-row.memory-rank-1 {
+  border-color: #e5bd3f;
+  background: #fff8df;
+}
+
+.memory-mode .ranking-row.memory-rank-2 {
+  border-color: #b9c4d5;
+  background: #f5f7fa;
+}
+
+.memory-mode .ranking-row.memory-rank-3 {
+  border-color: #d5a16d;
+  background: #fff3e8;
+}
+
+.memory-mode .ranking-row.me {
+  outline: 3px solid rgba(47, 109, 246, 0.3);
+}
+
 .seat-private-notice {
   display: grid;
   gap: 8px;
@@ -1594,8 +1878,19 @@ button.seat-tile:disabled {
   .ghost-layout,
   .ghost-builder-grid,
   .catchmind-play-layout,
-  .seat-student-layout {
+  .seat-student-layout,
+  .memory-results-grid,
+  .memory-setup-layout {
     grid-template-columns: 1fr;
+  }
+
+  .memory-game-toolbar {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    font-size: 0.9rem;
+  }
+
+  .memory-game-toolbar strong {
+    grid-column: 1 / -1;
   }
 
   .stats {
@@ -1673,6 +1968,20 @@ button.seat-tile:disabled {
   }
 
   .ghost-chat-form {
+    grid-template-columns: 1fr;
+  }
+
+  .memory-board {
+    width: min(100%, 68dvh);
+    gap: 4px;
+  }
+
+  .memory-card-back,
+  .memory-card-front {
+    border-width: 1px;
+  }
+
+  .memory-awards {
     grid-template-columns: 1fr;
   }
 }

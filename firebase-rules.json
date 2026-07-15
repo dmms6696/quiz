@@ -7,10 +7,10 @@
         ".read": true,
         ".write": true,
         "mode": {
-          ".validate": "newData.val() === 'quiz' || newData.val() === 'compliment' || newData.val() === 'mafia' || newData.val() === 'liar' || newData.val() === 'catchmind' || newData.val() === 'seat'"
+          ".validate": "newData.val() === 'quiz' || newData.val() === 'compliment' || newData.val() === 'mafia' || newData.val() === 'liar' || newData.val() === 'catchmind' || newData.val() === 'seat' || newData.val() === 'memory'"
         },
         "status": {
-          ".validate": "newData.val() === 'waiting' || newData.val() === 'ready' || newData.val() === 'collecting' || newData.val() === 'playing' || newData.val() === 'result' || newData.val() === 'targetReveal' || newData.val() === 'authorGuess' || newData.val() === 'authorReveal' || newData.val() === 'roleAssigned' || newData.val() === 'roleReveal' || newData.val() === 'nightAction' || newData.val() === 'nightResult' || newData.val() === 'discussion' || newData.val() === 'voting' || newData.val() === 'voteResult' || newData.val() === 'roleRevealDead' || newData.val() === 'seatSelection' || newData.val() === 'cardPhase' || newData.val() === 'finalReady' || newData.val() === 'finalReveal' || newData.val() === 'finished'"
+          ".validate": "newData.val() === 'waiting' || newData.val() === 'ready' || newData.val() === 'collecting' || newData.val() === 'playing' || newData.val() === 'result' || newData.val() === 'targetReveal' || newData.val() === 'authorGuess' || newData.val() === 'authorReveal' || newData.val() === 'roleAssigned' || newData.val() === 'roleReveal' || newData.val() === 'nightAction' || newData.val() === 'nightResult' || newData.val() === 'discussion' || newData.val() === 'voting' || newData.val() === 'voteResult' || newData.val() === 'roleRevealDead' || newData.val() === 'seatSelection' || newData.val() === 'cardPhase' || newData.val() === 'finalReady' || newData.val() === 'finalReveal' || newData.val() === 'memoryReady' || newData.val() === 'memoryCountdown' || newData.val() === 'memoryPlaying' || newData.val() === 'memoryAwaitingResults' || newData.val() === 'finished'"
         },
         "currentQuestionIndex": {
           ".validate": "newData.isNumber() && newData.val() >= -1"
@@ -181,6 +181,44 @@
                 ".validate": "newData.isNumber() && newData.val() >= 0 && newData.val() <= 1000"
               }
             }
+          }
+        }
+      }
+    },
+    "memoryPrivate": {
+      "$roomCode": {
+        "$gameId": {
+          "$studentId": {
+            ".read": true,
+            ".write": true,
+            ".validate": "!newData.exists() || newData.hasChildren(['playerId', 'playerName', 'gameId', 'boardSize', 'cards', 'attempts', 'completed'])",
+            "boardSize": {
+              ".validate": "newData.isNumber() && (newData.val() === 2 || newData.val() === 4 || newData.val() === 6)"
+            },
+            "attempts": {
+              ".validate": "newData.isNumber() && newData.val() >= 0"
+            },
+            "completed": {
+              ".validate": "newData.isBoolean()"
+            },
+            "completionTimeMs": {
+              ".validate": "!newData.exists() || (newData.isNumber() && newData.val() >= 0)"
+            }
+          }
+        }
+      }
+    },
+    "memoryRecords": {
+      ".read": true,
+      ".write": true,
+      "$boardSize": {
+        "$studentId": {
+          ".validate": "!newData.exists() || newData.hasChildren(['playerId', 'playerName', 'boardSize', 'completionTimeMs', 'attempts', 'achievedAt', 'gameId'])",
+          "completionTimeMs": {
+            ".validate": "newData.isNumber() && newData.val() >= 0"
+          },
+          "attempts": {
+            ".validate": "newData.isNumber() && newData.val() >= 0"
           }
         }
       }
