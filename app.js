@@ -61,6 +61,11 @@ const VOTE_TIE_RULE = "revote_then_skip";
 const REVEAL_ROLE_ON_ELIMINATION = true;
 const MAFIA_SELF_SELECT_ALLOWED = false;
 const DEFAULT_LIAR_COUNT = 2;
+const DEFAULT_CATCHMIND_ROUND_SECONDS = 60;
+const MIN_CATCHMIND_ROUND_SECONDS = 31;
+const MAX_CATCHMIND_ROUND_SECONDS = 180;
+const DEFAULT_CATCHMIND_ROUNDS = 5;
+const CATCHMIND_DRAW_FLUSH_MS = 140;
 const GHOST_BINGO_REQUIRED_CONDITIONS = 8;
 const GHOST_BINGO_FREE_ID = "FREE";
 const GHOST_CHAT_MAX_LENGTH = 100;
@@ -213,9 +218,27 @@ const state = {
   ghostBingoDraft: null,
   selectedGhostBingoConditionId: "",
   lastGhostChatAt: 0,
+  ghostChatDraft: "",
+  ghostChatShouldFocus: false,
+  ghostChatSending: false,
   liarWordVisible: false,
   liarWordVisibleKey: "",
-  selectedLiarVoteTargetId: ""
+  selectedLiarVoteTargetId: "",
+  catchmindWordVisibleKey: "",
+  catchmindTeacherAnswerVisibleKey: "",
+  catchmindAnswerDraft: "",
+  catchmindWrongMessage: "",
+  catchmindTool: "pen",
+  catchmindColor: "#111827",
+  catchmindSize: 5,
+  catchmindDrawing: {
+    active: false,
+    strokeId: "",
+    points: [],
+    color: "#111827",
+    size: 5,
+    lastFlushAt: 0
+  }
 };
 
 const appEl = document.querySelector("#app");
@@ -337,7 +360,7 @@ function renderHome() {
                 <label class="mode-tile">
                   <input type="radio" name="teacherMode" value="quiz" checked />
                   <span>
-                    <strong>자기소개 퀴즈 배틀</strong>
+                    <strong>퀴즈 배틀</strong>
                     <small>학생들이 낸 4지선다 문제를 풉니다.</small>
                   </span>
                 </label>
@@ -360,6 +383,13 @@ function renderHome() {
                   <span>
                     <strong>라이어게임</strong>
                     <small>비슷한 제시어 속 숨어 있는 라이어를 찾아라!</small>
+                  </span>
+                </label>
+                <label class="mode-tile">
+                  <input type="radio" name="teacherMode" value="catchmind" />
+                  <span>
+                    <strong>캐치마인드</strong>
+                    <small>그림을 보고 제시어를 가장 빠르게 맞혀라!</small>
                   </span>
                 </label>
               </div>
@@ -399,6 +429,11 @@ function renderStudentRoute() {
 
   if (getRoomMode() === "liar") {
     renderLiarStudentRoute();
+    return;
+  }
+
+  if (getRoomMode() === "catchmind") {
+    renderCatchmindStudentRoute();
     return;
   }
 
@@ -926,7 +961,7 @@ function renderMafiaStudentRoute() {
   const player = getMafiaPlayer(state.studentId);
   if (status !== "finished" && player && !player.alive) {
     ensureMafiaGhostEntry(player);
-    renderMafiaGhostMode(true);
+    renderMafiaGhostMode(false);
     return;
   }
 
@@ -1210,6 +1245,7 @@ function renderMafiaSpectator(label, message, force = false) {
 }
 
 function renderMafiaGhostMode(force = false) {
+  captureGhostChatDraft();
   const player = getMafiaPlayer(state.studentId);
   const ghost = getMafiaGhost(state.studentId);
 
@@ -1236,7 +1272,16 @@ function renderMafiaGhostMode(force = false) {
     syncGhostBingoProgress(ghost);
   }
 
-  setView(`mafia-ghost-${Boolean(ghost.bingoConfirmed)}-${getMafiaRoundNumber()}`, `
+  const viewKey = [
+    "mafia-ghost",
+    state.room.status || "waiting",
+    Boolean(ghost.bingoConfirmed),
+    getMafiaRoundNumber(),
+    getGhostBingoRenderKey(ghost),
+    getGhostChatRenderKey({ teacher: false, ghost })
+  ].join("-");
+
+  setView(viewKey, `
     <section class="screen mafia-mode ghost-mode">
       <div class="status-bar">
         <div>
@@ -1265,7 +1310,7 @@ function renderMafiaGhostMode(force = false) {
   `, () => {
     setupGhostBingoHandlers(ghost);
     setupGhostChatHandlers();
-    scrollGhostChatToBottom();
+    scrollGhostChatToBottom({ focusInput: state.ghostChatShouldFocus });
   }, force);
 }
 
@@ -1592,6 +1637,11 @@ function renderDisplayRoute(force = false) {
     return;
   }
 
+  if (getRoomMode() === "catchmind") {
+    renderCatchmindDisplay(force);
+    return;
+  }
+
   renderQuizDisplay(force);
 }
 
@@ -1602,7 +1652,9 @@ function renderDisplayShell(viewName, title, subtitle, bodyHtml, afterRender = n
       ? "mafia-mode"
       : getRoomMode() === "liar"
         ? "liar-mode"
-        : "";
+        : getRoomMode() === "catchmind"
+          ? "catchmind-mode"
+          : "";
   setView(viewName, `
     <section class="screen display-stage ${modeClass}">
       <div class="display-header">
@@ -1645,7 +1697,7 @@ function renderQuizDisplay(force = false) {
   }
 
   if ((status === "playing" || status === "result") && currentQuestion) {
-    renderDisplayShell(viewName, "자기소개 퀴즈 배틀", `${currentIndex + 1} / ${questions.length}번째 문제`, `
+    renderDisplayShell(viewName, "퀴즈 배틀", `${currentIndex + 1} / ${questions.length}번째 문제`, `
       <section class="panel display-main-panel">
         ${renderTeacherCurrentQuestion(currentQuestion, currentIndex, questions.length, status)}
       </section>
@@ -1668,7 +1720,7 @@ function renderQuizDisplay(force = false) {
     return;
   }
 
-  renderDisplayShell(viewName, "자기소개 퀴즈 배틀", "학생들이 문제를 제출하는 중입니다.", `
+  renderDisplayShell(viewName, "퀴즈 배틀", "학생들이 문제를 제출하는 중입니다.", `
     <div class="panel">
       <div class="stats">
         <div class="stat">
@@ -1944,6 +1996,11 @@ function renderTeacherDashboard(force = true) {
 
   if (getRoomMode() === "liar") {
     renderLiarTeacherDashboard(force);
+    return;
+  }
+
+  if (getRoomMode() === "catchmind") {
+    renderCatchmindTeacherDashboard(force);
     return;
   }
 
@@ -2494,6 +2551,1524 @@ function renderLiarTeacherDashboard(force = true) {
   }, force);
 }
 
+function renderCatchmindStudentRoute() {
+  const status = state.room.status || "waiting";
+  const game = getCatchmindState();
+  const round = getCurrentCatchmindRound();
+
+  if (status === "waiting" || !round) {
+    renderCatchmindStudentWaiting(true);
+    return;
+  }
+
+  if (status === "finished") {
+    renderCatchmindFinalResult("student-catchmind-final", false, true);
+    return;
+  }
+
+  if (status === "result") {
+    renderCatchmindRoundResult("student-catchmind-result", false, true);
+    return;
+  }
+
+  if (isCurrentCatchmindDrawer()) {
+    if (status === "ready") {
+      renderCatchmindDrawerReady(true);
+      return;
+    }
+    if (status === "playing") {
+      renderCatchmindDrawerCanvas(true);
+      return;
+    }
+  }
+
+  if (status === "ready") {
+    renderCatchmindGuessWaiting(true);
+    return;
+  }
+
+  if (status === "playing") {
+    renderCatchmindGuesser(true);
+    return;
+  }
+
+  renderCatchmindStudentWaiting(true);
+}
+
+function renderCatchmindStudentWaiting(force = false) {
+  const students = getStudents();
+  setView("catchmind-student-waiting", `
+    <section class="screen catchmind-mode">
+      <div class="status-bar">
+        <button class="btn ghost" id="backHomeBtn" type="button">처음으로</button>
+        <span class="pill blue">캐치마인드</span>
+        <span class="pill blue">방 코드 ${escapeHtml(state.roomCode)}</span>
+      </div>
+      <section class="panel catchmind-panel">
+        <h2>선생님이 캐치마인드를 시작할 때까지 기다려 주세요.</h2>
+        <p class="lead">현재 입장한 학생은 ${students.length}명입니다.</p>
+        <div class="notice info">게임이 시작되면 라운드마다 한 명이 제시어를 보고 그림을 그립니다.</div>
+      </section>
+    </section>
+  `, () => {
+    document.querySelector("#backHomeBtn")?.addEventListener("click", renderHome);
+  }, force);
+}
+
+function renderCatchmindDrawerReady(force = false) {
+  const round = getCurrentCatchmindRound();
+  const ready = isCatchmindDrawerReady();
+  const visibleKey = `${round.roundId}:${state.studentId}`;
+  const wordVisible = state.catchmindWordVisibleKey === visibleKey;
+
+  setView(`catchmind-drawer-ready-${round.roundId}-${ready}-${wordVisible}`, `
+    <section class="screen catchmind-mode">
+      <div class="status-bar">
+        <span class="pill green">이번 라운드의 출제자는 당신입니다!</span>
+        <span class="pill blue">${round.index + 1} / ${getCatchmindSettings().totalRounds} 라운드</span>
+      </div>
+      <section class="panel catchmind-panel word-card">
+        <p class="eyebrow">제시어 확인</p>
+        ${wordVisible ? `
+          <h1>${escapeHtml(round.word)}</h1>
+          <p class="lead">그림으로만 표현하세요. 글자나 숫자를 직접 쓰지 마세요.</p>
+          <button class="btn success" data-action="catchmind-drawer-ready" type="button" ${ready ? "disabled" : ""}>${ready ? "준비 완료" : "그림 그리기 준비 완료"}</button>
+        ` : `
+          <h2>제시어를 조용히 확인하세요.</h2>
+          <button class="btn primary" id="showCatchmindWordBtn" type="button">제시어 확인하기</button>
+        `}
+      </section>
+      <div class="notice info">준비 완료를 누르면 선생님이 라운드를 시작할 수 있습니다.</div>
+    </section>
+  `, () => {
+    document.querySelector("#showCatchmindWordBtn")?.addEventListener("click", () => {
+      state.catchmindWordVisibleKey = visibleKey;
+      renderCatchmindDrawerReady(true);
+    });
+    document.querySelector("[data-action='catchmind-drawer-ready']")?.addEventListener("click", confirmCatchmindDrawerReady);
+  }, force);
+}
+
+function renderCatchmindGuessWaiting(force = false) {
+  const round = getCurrentCatchmindRound();
+  setView(`catchmind-waiting-round-${round.roundId}`, `
+    <section class="screen catchmind-mode">
+      <section class="panel catchmind-panel">
+        <span class="pill blue">라운드 준비</span>
+        <h2>${escapeHtml(round.drawerName)} 학생이 제시어를 확인하고 있습니다.</h2>
+        <p class="lead">선생님이 라운드를 시작하면 그림과 정답 입력창이 열립니다.</p>
+      </section>
+    </section>
+  `, null, force);
+}
+
+function renderCatchmindDrawerCanvas(force = false) {
+  const round = getCurrentCatchmindRound();
+  setView(`catchmind-drawer-canvas-${round.roundId}-${state.room.status}`, `
+    <section class="screen catchmind-mode">
+      <div class="status-bar">
+        <div>
+          <p class="eyebrow">출제자 화면</p>
+          <h1>${escapeHtml(round.word)}</h1>
+        </div>
+        <span class="pill green" id="catchmindTimerText">남은 시간</span>
+      </div>
+      <div class="catchmind-play-layout">
+        <section class="panel catchmind-panel">
+          ${renderCatchmindCanvasSurface(true)}
+          ${renderCatchmindTools()}
+        </section>
+        <aside class="panel">
+          <h2>그림 규칙</h2>
+          <div class="notice warn">글자, 숫자, 정답을 직접 쓰지 말고 그림으로만 표현하세요.</div>
+          <p class="muted">정답자 ${getCatchmindCorrectAnswers().length}명</p>
+        </aside>
+      </div>
+    </section>
+  `, () => {
+    setupCatchmindCanvas({ interactive: true });
+    setupCatchmindToolHandlers();
+    startCatchmindRoundTimer({
+      round,
+      textSelector: "#catchmindTimerText",
+      onEnd: null
+    });
+  }, force);
+}
+
+function renderCatchmindGuesser(force = false) {
+  const round = getCurrentCatchmindRound();
+  const answer = getMyCatchmindCorrectAnswer();
+  const viewName = `catchmind-guesser-${round.roundId}-${Boolean(answer)}-${getCatchmindStrokeRenderKey()}-${getCatchmindCorrectAnswers().length}`;
+  const disabled = Boolean(answer);
+
+  setView(viewName, `
+    <section class="screen catchmind-mode">
+      <div class="status-bar">
+        <div>
+          <p class="eyebrow">${escapeHtml(round.drawerName)} 학생이 그림을 그리고 있습니다</p>
+          <h1 id="catchmindTimerText">남은 시간</h1>
+        </div>
+        <span class="pill blue">${round.index + 1} / ${getCatchmindSettings().totalRounds} 라운드</span>
+      </div>
+      <div class="catchmind-play-layout">
+        <section class="panel catchmind-panel">
+          ${renderCatchmindCanvasSurface(false)}
+        </section>
+        <aside class="panel">
+          <div id="catchmindHintBox">${renderCatchmindHint(round, Boolean(answer))}</div>
+          ${answer ? `
+            <div class="notice success">
+              <h2>정답입니다!</h2>
+              <p>정답: ${escapeHtml(round.word)}</p>
+              <p>${answer.rank}번째 정답 · +${answer.scoreEarned}점</p>
+            </div>
+          ` : `
+            <div class="field">
+              <label for="catchmindAnswerInput">정답 입력</label>
+              <input id="catchmindAnswerInput" maxlength="40" autocomplete="off" placeholder="정답을 입력하세요" value="${escapeAttr(state.catchmindAnswerDraft)}" ${disabled ? "disabled" : ""} />
+            </div>
+            <button class="btn primary full" id="catchmindAnswerSubmitBtn" type="button" ${disabled ? "disabled" : ""}>정답 제출</button>
+            ${state.catchmindWrongMessage ? `<div class="notice danger">${escapeHtml(state.catchmindWrongMessage)}</div>` : ""}
+          `}
+        </aside>
+      </div>
+    </section>
+  `, () => {
+    setupCatchmindCanvas({ interactive: false });
+    setupCatchmindAnswerHandlers();
+    startCatchmindRoundTimer({
+      round,
+      textSelector: "#catchmindTimerText",
+      hintSelector: "#catchmindHintBox",
+      alreadyCorrect: Boolean(answer),
+      onEnd: null
+    });
+  }, force);
+}
+
+function renderCatchmindRoundResult(viewName, showTeacherControls, force = false) {
+  const round = getCurrentCatchmindRound();
+  if (!round) {
+    renderCatchmindStudentWaiting(true);
+    return;
+  }
+
+  setView(viewName, `
+    <section class="screen catchmind-mode">
+      <div class="status-bar">
+        <span class="pill gold">라운드 결과</span>
+        ${showTeacherControls ? `
+          <div class="button-row">
+            <button class="btn success" data-action="catchmind-next-round" type="button">${isLastCatchmindRound() ? "최종 결과 보기" : "다음 라운드"}</button>
+            <button class="btn danger" data-action="reset" type="button">게임 초기화</button>
+          </div>
+        ` : ""}
+      </div>
+      <section class="panel catchmind-panel result-panel">
+        <p class="eyebrow">정답</p>
+        <h1>${escapeHtml(round.word)}</h1>
+        <p class="lead">출제자: ${escapeHtml(round.drawerName)}</p>
+      </section>
+      <div class="grid-2">
+        <section class="panel">
+          <h2>정답 순위</h2>
+          ${renderCatchmindCorrectRanking()}
+        </section>
+        <section class="panel">
+          <h2>출제자 점수</h2>
+          ${renderCatchmindDrawerScore()}
+        </section>
+      </div>
+      <section class="panel">
+        <h2>누적 랭킹</h2>
+        ${renderRanking(getCumulativeRanking())}
+      </section>
+    </section>
+  `, () => {
+    document.querySelector("[data-action='catchmind-next-round']")?.addEventListener("click", nextCatchmindRound);
+    document.querySelector("[data-action='reset']")?.addEventListener("click", resetGame);
+  }, force);
+}
+
+function renderCatchmindDisplay(force = false) {
+  const status = state.room?.status || "waiting";
+  const round = getCurrentCatchmindRound();
+  const viewName = `display-catchmind-${status}-${round?.roundId || "none"}-${getCatchmindStrokeRenderKey()}-${getCatchmindCorrectAnswers().length}`;
+
+  if (status === "finished") {
+    renderDisplayShell(viewName, "캐치마인드 최종 결과", "누적 점수를 확인합니다.", `
+      <section class="panel">
+        ${renderRanking(getCumulativeRanking())}
+      </section>
+    `, null, force);
+    return;
+  }
+
+  if (!round || status === "waiting") {
+    renderDisplayShell(viewName, "캐치마인드", "그림을 보고 제시어를 가장 빠르게 맞혀라!", `
+      <section class="panel catchmind-panel result-panel">
+        <h1>게임을 준비 중입니다.</h1>
+        <p class="lead">학생들이 입장하면 선생님이 라운드를 시작합니다.</p>
+      </section>
+    `, null, force);
+    return;
+  }
+
+  if (status === "result") {
+    renderDisplayShell(viewName, "라운드 결과", `${round.index + 1} / ${getCatchmindSettings().totalRounds} 라운드`, `
+      <section class="panel catchmind-panel result-panel">
+        <p class="eyebrow">정답</p>
+        <h1>${escapeHtml(round.word)}</h1>
+        <p class="lead">출제자: ${escapeHtml(round.drawerName)}</p>
+      </section>
+      <section class="panel">
+        ${renderCatchmindCorrectRanking()}
+      </section>
+    `, null, force);
+    return;
+  }
+
+  renderDisplayShell(viewName, "캐치마인드", `${escapeHtml(round.drawerName)} 학생이 그림을 그리고 있습니다`, `
+    <section class="panel catchmind-panel">
+      <div class="status-bar">
+        <span class="pill green" id="catchmindDisplayTimer">남은 시간</span>
+        <span class="pill blue">정답 ${getCatchmindCorrectAnswers().length} / ${getCatchmindGuesserCount()}명</span>
+      </div>
+      ${renderCatchmindCanvasSurface(false)}
+    </section>
+  `, () => {
+    setupCatchmindCanvas({ interactive: false });
+    startCatchmindRoundTimer({
+      round,
+      textSelector: "#catchmindDisplayTimer",
+      onEnd: null
+    });
+  }, force);
+}
+
+function renderCatchmindTeacherDashboard(force = true) {
+  const students = getStudents();
+  const game = getCatchmindState();
+  const settings = getCatchmindSettings();
+  const round = getCurrentCatchmindRound();
+  const status = state.room.status || "waiting";
+  const words = parseCatchmindWords(settings.wordsText || "");
+  const canStart = students.length >= 2 && words.length > 0;
+  const answerVisible = round && state.catchmindTeacherAnswerVisibleKey === round.roundId;
+
+  setView(`teacher-catchmind-${status}-${round?.roundId || "none"}-${getCatchmindStrokeRenderKey()}-${getCatchmindCorrectAnswers().length}-${answerVisible}`, `
+    <section class="screen catchmind-mode">
+      <div class="status-bar">
+        <div>
+          <p class="eyebrow">교사 화면</p>
+          <h1>캐치마인드</h1>
+        </div>
+        <button class="btn ghost" id="backHomeBtn" type="button">처음으로</button>
+      </div>
+
+      <div class="panel catchmind-panel">
+        <div class="status-bar">
+          <div>
+            <p class="muted small">학생들에게 알려 줄 방 코드</p>
+            <div class="room-code">${escapeHtml(state.roomCode)}</div>
+          </div>
+          <div class="button-row">
+            <span class="pill ${statusPillClass(status)}">${statusLabel(status)}</span>
+            <button class="btn ghost" id="copyRoomCodeBtn" type="button">방 코드 복사</button>
+            <button class="btn dark" data-action="open-display" type="button">교실 화면 팝업</button>
+          </div>
+        </div>
+        <div class="stats">
+          <div class="stat"><span class="muted">참가 학생</span><span class="num">${students.length}</span></div>
+          <div class="stat"><span class="muted">제시어</span><span class="num">${words.length}</span></div>
+          <div class="stat"><span class="muted">라운드</span><span class="num">${round ? `${round.index + 1}/${settings.totalRounds}` : settings.totalRounds}</span></div>
+        </div>
+      </div>
+
+      <div class="teacher-grid">
+        <aside class="panel">
+          ${renderTeacherModeControls()}
+          <section class="panel tight">
+            <h2>게임 설정</h2>
+            <div class="field">
+              <label for="catchmindWordsInput">제시어 목록</label>
+              <textarea id="catchmindWordsInput" maxlength="1200" placeholder="한 줄에 제시어 하나씩 입력해 주세요." ${status === "waiting" ? "" : "disabled"}>${escapeHtml(settings.wordsText || "")}</textarea>
+              <p class="muted small" id="catchmindWordCount">사용 가능한 제시어 ${words.length}개</p>
+            </div>
+            <div class="form-grid">
+              <div class="field">
+                <label for="catchmindDurationInput">라운드 제한 시간</label>
+                <input id="catchmindDurationInput" type="number" min="${MIN_CATCHMIND_ROUND_SECONDS}" max="${MAX_CATCHMIND_ROUND_SECONDS}" value="${settings.roundDuration}" ${status === "waiting" ? "" : "disabled"} />
+              </div>
+              <div class="field">
+                <label for="catchmindRoundsInput">게임 라운드 수</label>
+                <input id="catchmindRoundsInput" type="number" min="1" max="${Math.max(1, words.length)}" value="${Math.min(settings.totalRounds, Math.max(1, words.length || settings.totalRounds))}" ${status === "waiting" ? "" : "disabled"} />
+              </div>
+            </div>
+            <div class="button-row">
+              <button class="btn primary" data-action="catchmind-save-settings" type="button" ${status === "waiting" ? "" : "disabled"}>설정 저장</button>
+              <button class="btn success" data-action="catchmind-start-game" type="button" ${canStart && status === "waiting" ? "" : "disabled"}>게임 시작</button>
+            </div>
+            <p class="muted small">힌트가 정상 작동하도록 제한 시간은 최소 31초 이상입니다.</p>
+          </section>
+
+          <h2>진행 조작</h2>
+          <div class="button-row">
+            <button class="btn primary" data-action="catchmind-start-round" type="button" ${status === "ready" ? "" : "disabled"}>라운드 시작</button>
+            <button class="btn warn" data-action="catchmind-end-round" type="button" ${status === "playing" ? "" : "disabled"}>라운드 강제 종료</button>
+            <button class="btn ghost" data-action="catchmind-toggle-answer" type="button" ${round ? "" : "disabled"}>${answerVisible ? "정답 숨기기" : "정답 확인"}</button>
+            <button class="btn success" data-action="catchmind-next-round" type="button" ${status === "result" ? "" : "disabled"}>${isLastCatchmindRound() ? "최종 결과 보기" : "다음 라운드"}</button>
+            <button class="btn success" data-action="catchmind-restart-same" type="button" ${status === "finished" ? "" : "disabled"}>같은 설정으로 다시 하기</button>
+            <button class="btn ghost" data-action="catchmind-configure" type="button" ${status !== "waiting" ? "" : "disabled"}>설정 변경하기</button>
+            <button class="btn danger" data-action="reset" type="button">게임 초기화</button>
+            <button class="btn danger" data-action="clear-room" type="button">학생/자료 목록 초기화</button>
+          </div>
+        </aside>
+
+        <div class="screen">
+          <section class="panel catchmind-panel">
+            <h2>현재 라운드</h2>
+            ${renderCatchmindTeacherRoundPanel(answerVisible)}
+          </section>
+          <div class="grid-2">
+            <section class="panel">
+              <h3>정답 완료</h3>
+              ${renderCatchmindCorrectList()}
+            </section>
+            <section class="panel">
+              <h3>미정답</h3>
+              ${renderCatchmindUnansweredList()}
+            </section>
+          </div>
+          <div class="grid-2">
+            <section class="panel">
+              <h3>최근 오답</h3>
+              ${renderCatchmindWrongAnswers()}
+            </section>
+            <section class="panel">
+              <h3>누적 랭킹</h3>
+              ${renderRanking(getCumulativeRanking().slice(0, 8))}
+            </section>
+          </div>
+        </div>
+      </div>
+    </section>
+  `, () => {
+    document.querySelector("#backHomeBtn")?.addEventListener("click", renderHome);
+    document.querySelector("#copyRoomCodeBtn")?.addEventListener("click", copyRoomCode);
+    document.querySelectorAll("[data-switch-mode]").forEach((button) => {
+      button.addEventListener("click", () => switchRoomMode(button.dataset.switchMode));
+    });
+    document.querySelectorAll("[data-action]").forEach((button) => {
+      button.addEventListener("click", () => handleTeacherAction(button.dataset.action));
+    });
+    setupCatchmindSettingsPreview();
+    setupCatchmindCanvas({ interactive: false });
+    if (status === "playing" && round) {
+      startCatchmindRoundTimer({
+        round,
+        textSelector: "#catchmindTeacherTimer",
+        fillSelector: "#catchmindTeacherTimerFill",
+        onEnd: () => endCatchmindRound()
+      });
+    }
+  }, force);
+}
+
+function renderCatchmindCanvasSurface(interactive) {
+  return `
+    <div class="catchmind-canvas-wrap ${interactive ? "drawing" : ""}">
+      <canvas id="catchmindCanvas" class="catchmind-canvas" aria-label="캐치마인드 그림판"></canvas>
+    </div>
+  `;
+}
+
+function renderCatchmindTools() {
+  const colors = [
+    ["#111827", "검정"],
+    ["#ef4444", "빨강"],
+    ["#2563eb", "파랑"],
+    ["#16a34a", "초록"]
+  ];
+  const sizes = [
+    [3, "얇게"],
+    [5, "보통"],
+    [9, "굵게"]
+  ];
+
+  return `
+    <div class="catchmind-tools">
+      <div class="segmented">
+        ${colors.map(([color, label]) => `
+          <button class="tool-btn ${state.catchmindTool === "pen" && state.catchmindColor === color ? "selected" : ""}" data-catchmind-color="${color}" type="button" title="${label}">
+            <span class="color-dot" style="background:${color}"></span>
+          </button>
+        `).join("")}
+        <button class="tool-btn ${state.catchmindTool === "eraser" ? "selected" : ""}" data-catchmind-tool="eraser" type="button">지우개</button>
+      </div>
+      <div class="segmented">
+        ${sizes.map(([size, label]) => `
+          <button class="btn ${state.catchmindSize === size ? "primary" : "ghost"}" data-catchmind-size="${size}" type="button">${label}</button>
+        `).join("")}
+      </div>
+      <div class="button-row">
+        <button class="btn ghost" id="catchmindUndoBtn" type="button">실행 취소</button>
+        <button class="btn danger" id="catchmindClearBtn" type="button">전체 지우기</button>
+      </div>
+    </div>
+  `;
+}
+
+function renderCatchmindHint(round, alreadyCorrect = false) {
+  if (!round || alreadyCorrect) {
+    return `<div class="notice info">정답을 맞힌 뒤에는 힌트가 더 이상 강조되지 않습니다.</div>`;
+  }
+
+  const remaining = getCatchmindRemainingSeconds(round);
+  const lengthHint = remaining <= 30;
+  const initialHint = remaining <= 10;
+
+  if (!lengthHint) {
+    return `<div class="notice info">남은 시간 30초에 글자 수 힌트가 공개됩니다.</div>`;
+  }
+
+  return `
+    <div class="notice ${initialHint ? "warn hint-pop" : "info"}">
+      <strong>힌트: ${countCatchmindLetters(round.word)}글자</strong>
+      ${initialHint ? `<p>초성: ${escapeHtml(getKoreanInitials(round.word))}</p>` : ""}
+    </div>
+  `;
+}
+
+function renderCatchmindTeacherRoundPanel(answerVisible) {
+  const round = getCurrentCatchmindRound();
+  if (!round) {
+    return `<div class="empty">게임을 시작하면 현재 라운드가 표시됩니다.</div>`;
+  }
+
+  const correctCount = getCatchmindCorrectAnswers().length;
+  const guesserCount = getCatchmindGuesserCount();
+  const ready = isCatchmindDrawerReady();
+  const status = state.room.status || "waiting";
+
+  return `
+    <div class="stack">
+      <div class="stats">
+        <div class="stat"><span class="muted">현재 라운드</span><span class="num">${round.index + 1} / ${getCatchmindSettings().totalRounds}</span></div>
+        <div class="stat"><span class="muted">출제자</span><span class="num">${escapeHtml(round.drawerName)}</span></div>
+        <div class="stat"><span class="muted">정답</span><span class="num">${correctCount} / ${guesserCount}</span></div>
+      </div>
+      ${answerVisible ? `<div class="notice warn"><strong>교사용 정답:</strong> ${escapeHtml(round.word)}</div>` : `<div class="notice info">정답은 필요할 때만 확인하세요.</div>`}
+      ${status === "ready" ? `<div class="notice ${ready ? "success" : "info"}">출제자 준비 상태: ${ready ? "준비 완료" : "제시어 확인 중"}</div>` : ""}
+      ${status === "playing" ? `
+        <div>
+          <div class="status-bar">
+            <strong id="catchmindTeacherTimer">남은 시간</strong>
+            <span class="pill green">진행 중</span>
+          </div>
+          <div class="timer-track"><div id="catchmindTeacherTimerFill" class="timer-fill"></div></div>
+        </div>
+        ${renderCatchmindCanvasSurface(false)}
+      ` : ""}
+      ${status === "result" ? renderCatchmindDrawerScore() : ""}
+    </div>
+  `;
+}
+
+function renderCatchmindCorrectList() {
+  const answers = getCatchmindCorrectAnswers();
+  if (!answers.length) {
+    return `<div class="empty">아직 정답자가 없습니다.</div>`;
+  }
+  return `
+    <ul class="list">
+      ${answers.map((answer) => `
+        <li class="list-row split">
+          <strong>${answer.rank}위 ${escapeHtml(answer.name)}</strong>
+          <span class="pill green">+${answer.scoreEarned}점</span>
+        </li>
+      `).join("")}
+    </ul>
+  `;
+}
+
+function renderCatchmindUnansweredList() {
+  const round = getCurrentCatchmindRound();
+  if (!round) {
+    return `<div class="empty">라운드가 없습니다.</div>`;
+  }
+  const correctIds = new Set(getCatchmindCorrectAnswers().map((answer) => answer.studentId));
+  const students = getStudents().filter((student) => student.id !== round.drawerId && !correctIds.has(student.id));
+  if (!students.length) {
+    return `<div class="notice success">모든 추리 참가자가 정답을 맞혔습니다.</div>`;
+  }
+  return renderStudentList(students);
+}
+
+function renderCatchmindWrongAnswers() {
+  const wrong = getCatchmindWrongAnswers().slice(-8).reverse();
+  if (!wrong.length) {
+    return `<div class="empty">최근 오답이 없습니다.</div>`;
+  }
+  return `
+    <ul class="list">
+      ${wrong.map((answer) => `
+        <li class="list-row split">
+          <strong>${escapeHtml(answer.name)}</strong>
+          <span>${escapeHtml(answer.text)}</span>
+        </li>
+      `).join("")}
+    </ul>
+  `;
+}
+
+function renderCatchmindCorrectRanking() {
+  const answers = getCatchmindCorrectAnswers();
+  if (!answers.length) {
+    return `<div class="empty">정답자가 없습니다.</div>`;
+  }
+  const medals = ["🥇", "🥈", "🥉"];
+  return `
+    <div class="ranking">
+      ${answers.map((answer, index) => `
+        <div class="ranking-row rank-${index + 1}">
+          <span class="rank-medal">${medals[index] || answer.rank}</span>
+          <strong>${escapeHtml(answer.name)}</strong>
+          <span class="score">+${answer.scoreEarned}점</span>
+        </div>
+      `).join("")}
+    </div>
+  `;
+}
+
+function renderCatchmindDrawerScore() {
+  const round = getCurrentCatchmindRound();
+  if (!round) {
+    return `<div class="empty">출제자 점수가 없습니다.</div>`;
+  }
+  const roundData = getCurrentCatchmindRoundData();
+  const score = Number(roundData.drawerScoreEarned ?? calculateCatchmindDrawerScore().drawerScore);
+  const correct = getCatchmindCorrectAnswers().length;
+  const total = getCatchmindGuesserCount();
+  return `
+    <div class="notice ${score ? "success" : "info"}">
+      <h2>${escapeHtml(round.drawerName)} +${score}점</h2>
+      <p>정답자 ${correct} / ${total}명</p>
+    </div>
+  `;
+}
+
+function renderCatchmindFinalResult(viewName, showTeacherControls, force = false) {
+  const ranking = getCumulativeRanking();
+  setView(viewName, `
+    <section class="screen catchmind-mode">
+      <div class="status-bar">
+        <span class="pill red">최종 결과</span>
+        ${showTeacherControls ? `
+          <div class="button-row">
+            <button class="btn success" data-action="catchmind-restart-same" type="button">같은 설정으로 다시 하기</button>
+            <button class="btn ghost" data-action="catchmind-configure" type="button">설정 변경하기</button>
+            <button class="btn dark" id="backHomeBtn" type="button">플레이그라운드로 돌아가기</button>
+          </div>
+        ` : ""}
+      </div>
+      <section class="panel catchmind-panel result-panel">
+        <h1>캐치마인드 최종 결과</h1>
+      </section>
+      <section class="panel">
+        ${renderRanking(ranking)}
+      </section>
+    </section>
+  `, () => {
+    document.querySelector("[data-action='catchmind-restart-same']")?.addEventListener("click", () => startCatchmindGame({ reuseSettings: true }));
+    document.querySelector("[data-action='catchmind-configure']")?.addEventListener("click", configureCatchmindGame);
+    document.querySelector("#backHomeBtn")?.addEventListener("click", renderHome);
+  }, force);
+}
+
+async function saveCatchmindSettings() {
+  const settings = readCatchmindSettingsFromForm();
+  if (!validateCatchmindSettings(settings)) {
+    return;
+  }
+
+  try {
+    await update(roomRef(state.roomCode), {
+      "catchmind/settings": settings
+    });
+    showToast("캐치마인드 설정을 저장했습니다.", "success");
+  } catch (error) {
+    console.error(error);
+    showToast("캐치마인드 설정을 저장하지 못했습니다.", "error");
+  }
+}
+
+async function startCatchmindGame({ reuseSettings = false } = {}) {
+  const students = getStudents();
+  const settings = reuseSettings ? getCatchmindSettings() : readCatchmindSettingsFromForm();
+
+  if (students.length < 2) {
+    showToast("캐치마인드는 학생이 2명 이상 입장해야 시작할 수 있습니다.", "error");
+    return;
+  }
+
+  if (!validateCatchmindSettings(settings)) {
+    return;
+  }
+
+  const gameId = `catch_${Date.now()}_${Math.random().toString(16).slice(2, 8)}`;
+  const wordOrder = shuffleArray(settings.wordList).slice(0, settings.totalRounds);
+  const drawerOrder = buildCatchmindDrawerOrder(students, settings.totalRounds);
+  const firstRound = createCatchmindRound({ gameId, index: 0, wordOrder, drawerOrder, students });
+  const updates = {
+    mode: "catchmind",
+    status: "ready",
+    catchmind: {
+      settings,
+      gameId,
+      currentRoundIndex: 0,
+      drawerOrder,
+      wordOrder,
+      currentRound: firstRound,
+      rounds: {
+        [firstRound.roundId]: getEmptyCatchmindRoundData()
+      }
+    }
+  };
+
+  students.forEach((student) => {
+    updates[`students/${student.id}/score`] = 0;
+  });
+
+  openDisplayWindow();
+
+  try {
+    await update(roomRef(state.roomCode), updates);
+    state.catchmindTeacherAnswerVisibleKey = "";
+    state.catchmindWordVisibleKey = "";
+    showToast("캐치마인드 게임을 시작했습니다.", "success");
+  } catch (error) {
+    console.error(error);
+    showToast("캐치마인드 게임을 시작하지 못했습니다.", "error");
+  }
+}
+
+async function confirmCatchmindDrawerReady() {
+  const round = getCurrentCatchmindRound();
+  if (!round || !isCurrentCatchmindDrawer()) {
+    showToast("현재 출제자만 준비 완료를 누를 수 있습니다.", "error");
+    return;
+  }
+
+  try {
+    await update(roomRef(state.roomCode), {
+      "catchmind/currentRound/drawerReady": true,
+      "catchmind/currentRound/drawerReadyAt": Date.now()
+    });
+    showToast("준비 완료를 선생님께 보냈습니다.", "success");
+  } catch (error) {
+    console.error(error);
+    showToast("준비 상태를 저장하지 못했습니다.", "error");
+  }
+}
+
+async function startCatchmindRound() {
+  const round = getCurrentCatchmindRound();
+  const settings = getCatchmindSettings();
+  if (!round) {
+    showToast("시작할 라운드가 없습니다.", "error");
+    return;
+  }
+
+  const now = Date.now();
+  const endsAt = now + settings.roundDuration * 1000;
+  try {
+    await update(roomRef(state.roomCode), {
+      status: "playing",
+      "catchmind/currentRound/roundStartedAt": now,
+      "catchmind/currentRound/roundEndsAt": endsAt,
+      [`catchmind/rounds/${round.roundId}/startedAt`]: now,
+      [`catchmind/rounds/${round.roundId}/endsAt`]: endsAt,
+      [`catchmind/rounds/${round.roundId}/endedAt`]: null
+    });
+    showToast("라운드를 시작했습니다.", "success");
+  } catch (error) {
+    console.error(error);
+    showToast("라운드를 시작하지 못했습니다.", "error");
+  }
+}
+
+async function submitCatchmindAnswer() {
+  const round = getCurrentCatchmindRound();
+  const input = document.querySelector("#catchmindAnswerInput");
+  const text = cleanText(input?.value || state.catchmindAnswerDraft || "");
+
+  if (!round || (state.room?.status || "waiting") !== "playing") {
+    showToast("지금은 정답 제출 시간이 아닙니다.", "error");
+    return;
+  }
+
+  if (round.drawerId === state.studentId) {
+    showToast("출제자는 정답을 제출하지 않습니다.", "error");
+    return;
+  }
+
+  if (Date.now() > Number(round.roundEndsAt || 0)) {
+    showToast("라운드 시간이 끝났습니다.", "error");
+    return;
+  }
+
+  if (!text) {
+    showToast("정답을 입력해 주세요.", "error");
+    return;
+  }
+
+  if (getMyCatchmindCorrectAnswer()) {
+    showToast("이미 정답을 맞혔습니다.", "success");
+    return;
+  }
+
+  if (normalizeCatchmindAnswer(text) !== normalizeCatchmindAnswer(round.word)) {
+    const wrongId = `wrong_${Date.now()}_${state.studentId.slice(0, 6)}`;
+    state.catchmindWrongMessage = "땡! 다시 생각해 보세요.";
+    try {
+      await set(ref(db, `rooms/${state.roomCode}/catchmind/rounds/${round.roundId}/wrongAnswers/${wrongId}`), {
+        studentId: state.studentId,
+        name: state.studentName,
+        text,
+        submittedAt: Date.now()
+      });
+    } catch (error) {
+      console.error(error);
+    }
+    renderCatchmindGuesser(true);
+    return;
+  }
+
+  const correctPath = ref(db, `rooms/${state.roomCode}/catchmind/rounds/${round.roundId}/correctAnswers`);
+  const submittedAt = Date.now();
+  try {
+    const result = await runTransaction(correctPath, (current) => {
+      const answers = current && typeof current === "object" ? { ...current } : {};
+      if (answers[state.studentId]) {
+        return answers;
+      }
+      const rank = Object.keys(answers).length + 1;
+      answers[state.studentId] = {
+        studentId: state.studentId,
+        name: state.studentName,
+        answer: text,
+        rank,
+        scoreEarned: getCatchmindAnswerScore(rank),
+        answeredAt: submittedAt
+      };
+      return answers;
+    });
+    if (result.committed) {
+      state.catchmindAnswerDraft = "";
+      state.catchmindWrongMessage = "";
+      showToast("정답입니다!", "success");
+      renderCatchmindGuesser(true);
+    }
+  } catch (error) {
+    console.error(error);
+    showToast("정답을 저장하지 못했습니다.", "error");
+  }
+}
+
+async function endCatchmindRound({ forced = false } = {}) {
+  const round = getCurrentCatchmindRound();
+  if (!round || !["ready", "playing"].includes(state.room?.status || "waiting")) {
+    return;
+  }
+
+  if (forced && !window.confirm("현재 라운드를 강제 종료할까요?")) {
+    return;
+  }
+
+  const scorePath = ref(db, `rooms/${state.roomCode}/catchmind/rounds/${round.roundId}/scoreApplied`);
+  const correctAnswers = getCatchmindCorrectAnswers();
+  const { drawerScore } = calculateCatchmindDrawerScore();
+  const updates = {
+    status: "result",
+    "catchmind/currentRound/endedAt": Date.now(),
+    [`catchmind/rounds/${round.roundId}/endedAt`]: Date.now(),
+    [`catchmind/rounds/${round.roundId}/drawerScoreEarned`]: drawerScore,
+    [`catchmind/rounds/${round.roundId}/correctCount`]: correctAnswers.length
+  };
+
+  try {
+    const scoreResult = await runTransaction(scorePath, (current) => current ? undefined : true);
+    await update(roomRef(state.roomCode), updates);
+    if (scoreResult.committed) {
+      for (const answer of correctAnswers) {
+        await incrementStudentScore(answer.studentId, answer.scoreEarned);
+      }
+      if (drawerScore > 0) {
+        await incrementStudentScore(round.drawerId, drawerScore);
+      }
+    }
+    showToast("라운드 결과를 공개했습니다.", "success");
+  } catch (error) {
+    console.error(error);
+    showToast("라운드를 종료하지 못했습니다.", "error");
+  }
+}
+
+async function nextCatchmindRound() {
+  const game = getCatchmindState();
+  const settings = getCatchmindSettings();
+  const currentIndex = Number(game.currentRoundIndex || 0);
+  const nextIndex = currentIndex + 1;
+
+  if (nextIndex >= settings.totalRounds) {
+    try {
+      await update(roomRef(state.roomCode), {
+        status: "finished",
+        "catchmind/finishedAt": Date.now()
+      });
+    } catch (error) {
+      console.error(error);
+      showToast("최종 결과로 이동하지 못했습니다.", "error");
+    }
+    return;
+  }
+
+  const students = getStudents();
+  const nextRound = createCatchmindRound({
+    gameId: game.gameId,
+    index: nextIndex,
+    wordOrder: game.wordOrder,
+    drawerOrder: game.drawerOrder,
+    students
+  });
+
+  try {
+    await update(roomRef(state.roomCode), {
+      status: "ready",
+      "catchmind/currentRoundIndex": nextIndex,
+      "catchmind/currentRound": nextRound,
+      [`catchmind/rounds/${nextRound.roundId}`]: getEmptyCatchmindRoundData()
+    });
+    state.catchmindTeacherAnswerVisibleKey = "";
+    state.catchmindWordVisibleKey = "";
+  } catch (error) {
+    console.error(error);
+    showToast("다음 라운드로 이동하지 못했습니다.", "error");
+  }
+}
+
+function toggleCatchmindTeacherAnswer() {
+  const round = getCurrentCatchmindRound();
+  if (!round) {
+    return;
+  }
+  state.catchmindTeacherAnswerVisibleKey = state.catchmindTeacherAnswerVisibleKey === round.roundId ? "" : round.roundId;
+  renderCatchmindTeacherDashboard(true);
+}
+
+async function configureCatchmindGame() {
+  if (!window.confirm("현재 캐치마인드 진행 기록을 지우고 설정 화면으로 돌아갈까요?")) {
+    return;
+  }
+
+  try {
+    await update(roomRef(state.roomCode), {
+      status: "waiting",
+      catchmind: {
+        settings: getCatchmindSettings()
+      }
+    });
+    showToast("캐치마인드 설정 화면으로 돌아왔습니다.", "success");
+  } catch (error) {
+    console.error(error);
+    showToast("설정 화면으로 돌아가지 못했습니다.", "error");
+  }
+}
+
+function getDefaultCatchmindSettings() {
+  return {
+    wordsText: "",
+    wordList: [],
+    roundDuration: DEFAULT_CATCHMIND_ROUND_SECONDS,
+    totalRounds: 1
+  };
+}
+
+function getInitialCatchmindStateForWrite() {
+  return {
+    settings: getDefaultCatchmindSettings()
+  };
+}
+
+function getCatchmindState() {
+  const raw = {
+    settings: getCatchmindSettings(),
+    gameId: "",
+    currentRoundIndex: 0,
+    drawerOrder: [],
+    wordOrder: [],
+    currentRound: null,
+    rounds: {},
+    ...(state.room?.catchmind || {})
+  };
+  return {
+    ...raw,
+    drawerOrder: normalizeIndexedList(raw.drawerOrder),
+    wordOrder: normalizeIndexedList(raw.wordOrder)
+  };
+}
+
+function getCatchmindSettings() {
+  const settings = {
+    ...getDefaultCatchmindSettings(),
+    ...(state.room?.catchmind?.settings || {})
+  };
+  const words = parseCatchmindWords(settings.wordsText || "");
+  const savedWordList = normalizeIndexedList(settings.wordList);
+  return {
+    ...settings,
+    wordList: savedWordList.length ? savedWordList : words,
+    roundDuration: clampInt(settings.roundDuration, MIN_CATCHMIND_ROUND_SECONDS, MAX_CATCHMIND_ROUND_SECONDS, DEFAULT_CATCHMIND_ROUND_SECONDS),
+    totalRounds: clampInt(settings.totalRounds, 1, Math.max(1, words.length || savedWordList.length || 1), Math.min(DEFAULT_CATCHMIND_ROUNDS, Math.max(1, words.length || savedWordList.length || 1)))
+  };
+}
+
+function readCatchmindSettingsFromForm() {
+  const current = getCatchmindSettings();
+  const wordsText = document.querySelector("#catchmindWordsInput")?.value ?? current.wordsText;
+  const wordList = parseCatchmindWords(wordsText);
+  const maxRounds = Math.max(1, wordList.length);
+  return {
+    wordsText,
+    wordList,
+    roundDuration: clampInt(document.querySelector("#catchmindDurationInput")?.value, MIN_CATCHMIND_ROUND_SECONDS, MAX_CATCHMIND_ROUND_SECONDS, current.roundDuration),
+    totalRounds: clampInt(document.querySelector("#catchmindRoundsInput")?.value, 1, maxRounds, Math.min(DEFAULT_CATCHMIND_ROUNDS, maxRounds))
+  };
+}
+
+function validateCatchmindSettings(settings) {
+  if (!settings.wordList.length) {
+    showToast("제시어를 한 개 이상 입력해 주세요.", "error");
+    return false;
+  }
+  if (settings.totalRounds > settings.wordList.length) {
+    showToast("라운드 수는 제시어 수를 넘을 수 없습니다.", "error");
+    return false;
+  }
+  if (settings.roundDuration < MIN_CATCHMIND_ROUND_SECONDS) {
+    showToast("제한 시간은 최소 31초 이상이어야 합니다.", "error");
+    return false;
+  }
+  return true;
+}
+
+function parseCatchmindWords(text) {
+  const seen = new Set();
+  return String(text || "")
+    .split(/\r?\n/)
+    .map((line) => cleanText(line))
+    .filter(Boolean)
+    .filter((word) => {
+      if (seen.has(word)) {
+        return false;
+      }
+      seen.add(word);
+      return true;
+    })
+    .slice(0, 80);
+}
+
+function normalizeIndexedList(value) {
+  if (Array.isArray(value)) {
+    return value.filter((item) => item !== null && item !== undefined).map(String);
+  }
+  if (value && typeof value === "object") {
+    return Object.keys(value)
+      .sort((a, b) => Number(a) - Number(b))
+      .map((key) => value[key])
+      .filter((item) => item !== null && item !== undefined)
+      .map(String);
+  }
+  return [];
+}
+
+function setupCatchmindSettingsPreview() {
+  const textarea = document.querySelector("#catchmindWordsInput");
+  const countEl = document.querySelector("#catchmindWordCount");
+  const roundsInput = document.querySelector("#catchmindRoundsInput");
+  if (!textarea || !countEl) {
+    return;
+  }
+  const updatePreview = () => {
+    const words = parseCatchmindWords(textarea.value);
+    countEl.textContent = `사용 가능한 제시어 ${words.length}개`;
+    if (roundsInput) {
+      roundsInput.max = Math.max(1, words.length);
+      roundsInput.value = clampInt(roundsInput.value, 1, Math.max(1, words.length), Math.min(DEFAULT_CATCHMIND_ROUNDS, Math.max(1, words.length)));
+    }
+  };
+  textarea.addEventListener("input", updatePreview);
+  updatePreview();
+}
+
+function buildCatchmindDrawerOrder(students, totalRounds) {
+  const order = [];
+  while (order.length < totalRounds) {
+    order.push(...shuffleArray(students.map((student) => student.id)));
+  }
+  return order.slice(0, totalRounds);
+}
+
+function createCatchmindRound({ gameId, index, wordOrder, drawerOrder, students }) {
+  const drawerId = drawerOrder[index] || students[index % students.length]?.id || "";
+  return {
+    roundId: `${gameId}_r${index + 1}`,
+    index,
+    drawerId,
+    drawerName: getStudentNameById(drawerId),
+    word: wordOrder[index] || "",
+    drawerReady: false,
+    drawerReadyAt: null,
+    roundStartedAt: null,
+    roundEndsAt: null,
+    endedAt: null
+  };
+}
+
+function getEmptyCatchmindRoundData() {
+  return {
+    strokes: {},
+    correctAnswers: {},
+    wrongAnswers: {},
+    scoreApplied: false,
+    drawerScoreEarned: 0,
+    correctCount: 0
+  };
+}
+
+function getCurrentCatchmindRound() {
+  return getCatchmindState().currentRound || null;
+}
+
+function getCurrentCatchmindRoundData() {
+  const round = getCurrentCatchmindRound();
+  if (!round) {
+    return getEmptyCatchmindRoundData();
+  }
+  return {
+    ...getEmptyCatchmindRoundData(),
+    ...(state.room?.catchmind?.rounds?.[round.roundId] || {})
+  };
+}
+
+function isCurrentCatchmindDrawer() {
+  const round = getCurrentCatchmindRound();
+  return Boolean(round && round.drawerId === state.studentId);
+}
+
+function isCatchmindDrawerReady() {
+  return Boolean(getCurrentCatchmindRound()?.drawerReady);
+}
+
+function isLastCatchmindRound() {
+  const settings = getCatchmindSettings();
+  const round = getCurrentCatchmindRound();
+  return Boolean(round && round.index >= settings.totalRounds - 1);
+}
+
+function getCatchmindGuesserCount() {
+  const round = getCurrentCatchmindRound();
+  if (!round) {
+    return 0;
+  }
+  return getStudents().filter((student) => student.id !== round.drawerId).length;
+}
+
+function getCatchmindCorrectAnswers() {
+  const raw = getCurrentCatchmindRoundData().correctAnswers || {};
+  return Object.entries(raw)
+    .map(([id, value]) => ({
+      studentId: value.studentId || id,
+      name: value.name || getStudentNameById(id),
+      answer: value.answer || "",
+      rank: Number(value.rank || 0),
+      scoreEarned: Number(value.scoreEarned || 0),
+      answeredAt: Number(value.answeredAt || 0)
+    }))
+    .sort((a, b) => a.rank - b.rank || a.answeredAt - b.answeredAt);
+}
+
+function getMyCatchmindCorrectAnswer() {
+  return getCatchmindCorrectAnswers().find((answer) => answer.studentId === state.studentId) || null;
+}
+
+function getCatchmindWrongAnswers() {
+  const raw = getCurrentCatchmindRoundData().wrongAnswers || {};
+  return Object.entries(raw)
+    .map(([id, value]) => ({
+      id,
+      studentId: value.studentId || "",
+      name: value.name || "이름 없음",
+      text: value.text || "",
+      submittedAt: Number(value.submittedAt || 0)
+    }))
+    .sort((a, b) => a.submittedAt - b.submittedAt);
+}
+
+function getCatchmindAnswerScore(rank) {
+  if (rank === 1) {
+    return 3;
+  }
+  if (rank === 2) {
+    return 2;
+  }
+  return 1;
+}
+
+function calculateCatchmindDrawerScore() {
+  const correctCount = getCatchmindCorrectAnswers().length;
+  const guesserCount = getCatchmindGuesserCount();
+  const ratio = guesserCount > 0 ? correctCount / guesserCount : 0;
+  let drawerScore = 0;
+  if (ratio >= 0.7) {
+    drawerScore = 3;
+  } else if (ratio >= 0.3) {
+    drawerScore = 2;
+  } else if (correctCount > 0) {
+    drawerScore = 1;
+  }
+  return { drawerScore, correctCount, guesserCount, ratio };
+}
+
+function normalizeCatchmindAnswer(value) {
+  return cleanText(value).normalize("NFKC").toLocaleLowerCase("ko-KR");
+}
+
+function countCatchmindLetters(word) {
+  return Array.from(String(word || "").replace(/\s/g, "")).length;
+}
+
+function getKoreanInitials(word) {
+  const initials = ["ㄱ", "ㄲ", "ㄴ", "ㄷ", "ㄸ", "ㄹ", "ㅁ", "ㅂ", "ㅃ", "ㅅ", "ㅆ", "ㅇ", "ㅈ", "ㅉ", "ㅊ", "ㅋ", "ㅌ", "ㅍ", "ㅎ"];
+  return Array.from(String(word || "").replace(/\s/g, ""))
+    .map((char) => {
+      const code = char.charCodeAt(0);
+      if (code >= 0xac00 && code <= 0xd7a3) {
+        return initials[Math.floor((code - 0xac00) / 588)] || char;
+      }
+      return char;
+    })
+    .join("");
+}
+
+function getCatchmindRemainingSeconds(round) {
+  if (!round?.roundEndsAt) {
+    return getCatchmindSettings().roundDuration;
+  }
+  return Math.max(0, Math.ceil((Number(round.roundEndsAt) - Date.now()) / 1000));
+}
+
+function startCatchmindRoundTimer({ round, textSelector, fillSelector = "", hintSelector = "", alreadyCorrect = false, onEnd = null }) {
+  clearTimer();
+  const textEl = document.querySelector(textSelector);
+  const fillEl = fillSelector ? document.querySelector(fillSelector) : null;
+  const hintEl = hintSelector ? document.querySelector(hintSelector) : null;
+  if (!round || !textEl) {
+    return;
+  }
+  const totalMs = Math.max(1, Number(getCatchmindSettings().roundDuration || DEFAULT_CATCHMIND_ROUND_SECONDS)) * 1000;
+  let didEnd = false;
+  const tick = () => {
+    const remainingMs = Math.max(0, Number(round.roundEndsAt || Date.now()) - Date.now());
+    const seconds = Math.ceil(remainingMs / 1000);
+    textEl.textContent = `${seconds}초`;
+    if (fillEl) {
+      fillEl.style.width = `${Math.max(0, Math.min(100, (remainingMs / totalMs) * 100))}%`;
+    }
+    if (hintEl) {
+      hintEl.innerHTML = renderCatchmindHint(round, alreadyCorrect);
+    }
+    if (remainingMs <= 0 && !didEnd) {
+      didEnd = true;
+      clearTimer();
+      if (typeof onEnd === "function") {
+        onEnd();
+      }
+    }
+  };
+  tick();
+  state.timerId = window.setInterval(tick, 250);
+}
+
+function setupCatchmindAnswerHandlers() {
+  const input = document.querySelector("#catchmindAnswerInput");
+  const button = document.querySelector("#catchmindAnswerSubmitBtn");
+  if (!input || !button) {
+    return;
+  }
+  input.addEventListener("input", () => {
+    state.catchmindAnswerDraft = input.value;
+    state.catchmindWrongMessage = "";
+  });
+  input.addEventListener("keydown", (event) => {
+    if (event.key === "Enter") {
+      event.preventDefault();
+      submitCatchmindAnswer();
+    }
+  });
+  button.addEventListener("click", submitCatchmindAnswer);
+}
+
+function setupCatchmindCanvas({ interactive = false } = {}) {
+  const canvas = document.querySelector("#catchmindCanvas");
+  if (!canvas) {
+    return;
+  }
+  resizeCatchmindCanvas(canvas);
+  drawCatchmindCanvas(canvas);
+
+  if (!interactive) {
+    return;
+  }
+
+  canvas.addEventListener("pointerdown", (event) => startCatchmindStroke(event, canvas));
+  canvas.addEventListener("pointermove", (event) => moveCatchmindStroke(event, canvas));
+  canvas.addEventListener("pointerup", (event) => finishCatchmindStroke(event, canvas));
+  canvas.addEventListener("pointercancel", (event) => finishCatchmindStroke(event, canvas));
+  canvas.addEventListener("pointerleave", (event) => {
+    if (state.catchmindDrawing.active) {
+      finishCatchmindStroke(event, canvas);
+    }
+  });
+}
+
+function resizeCatchmindCanvas(canvas) {
+  const rect = canvas.getBoundingClientRect();
+  const width = Math.max(320, Math.floor(rect.width || canvas.clientWidth || 720));
+  const height = Math.max(240, Math.floor(rect.height || canvas.clientHeight || 420));
+  const dpr = window.devicePixelRatio || 1;
+  if (canvas.width !== Math.floor(width * dpr) || canvas.height !== Math.floor(height * dpr)) {
+    canvas.width = Math.floor(width * dpr);
+    canvas.height = Math.floor(height * dpr);
+  }
+  const ctx = canvas.getContext("2d");
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+}
+
+function drawCatchmindCanvas(canvas) {
+  const ctx = canvas.getContext("2d");
+  const width = canvas.clientWidth || 720;
+  const height = canvas.clientHeight || 420;
+  ctx.clearRect(0, 0, width, height);
+  ctx.fillStyle = "#ffffff";
+  ctx.fillRect(0, 0, width, height);
+  getCatchmindStrokes().forEach((stroke) => drawCatchmindStroke(ctx, stroke, width, height));
+}
+
+function drawCatchmindStroke(ctx, stroke, width, height) {
+  const points = normalizeCatchmindPoints(stroke.points);
+  if (!points.length) {
+    return;
+  }
+  ctx.save();
+  ctx.lineCap = "round";
+  ctx.lineJoin = "round";
+  ctx.strokeStyle = stroke.tool === "eraser" ? "#ffffff" : stroke.color || "#111827";
+  ctx.lineWidth = Number(stroke.size || 5);
+  ctx.beginPath();
+  ctx.moveTo(points[0].x * width, points[0].y * height);
+  points.slice(1).forEach((point) => ctx.lineTo(point.x * width, point.y * height));
+  if (points.length === 1) {
+    ctx.lineTo(points[0].x * width + 0.1, points[0].y * height + 0.1);
+  }
+  ctx.stroke();
+  ctx.restore();
+}
+
+function startCatchmindStroke(event, canvas) {
+  if ((state.room?.status || "waiting") !== "playing" || !isCurrentCatchmindDrawer()) {
+    return;
+  }
+  event.preventDefault();
+  canvas.setPointerCapture?.(event.pointerId);
+  const point = getCatchmindPointerPoint(event, canvas);
+  const strokeId = `stroke_${Date.now()}_${Math.random().toString(16).slice(2, 8)}`;
+  state.catchmindDrawing = {
+    active: true,
+    strokeId,
+    points: [point],
+    color: state.catchmindColor,
+    size: state.catchmindTool === "eraser" ? Math.max(16, state.catchmindSize * 3) : state.catchmindSize,
+    tool: state.catchmindTool,
+    lastFlushAt: 0
+  };
+  flushCatchmindStroke();
+}
+
+function moveCatchmindStroke(event, canvas) {
+  if (!state.catchmindDrawing.active) {
+    return;
+  }
+  event.preventDefault();
+  const point = getCatchmindPointerPoint(event, canvas);
+  const points = state.catchmindDrawing.points;
+  const previous = points[points.length - 1];
+  if (previous && Math.abs(previous.x - point.x) + Math.abs(previous.y - point.y) < 0.003) {
+    return;
+  }
+  points.push(point);
+  drawCatchmindLocalSegment(canvas, previous || point, point);
+  const now = Date.now();
+  if (now - state.catchmindDrawing.lastFlushAt >= CATCHMIND_DRAW_FLUSH_MS) {
+    flushCatchmindStroke();
+  }
+}
+
+function finishCatchmindStroke(event, canvas) {
+  if (!state.catchmindDrawing.active) {
+    return;
+  }
+  event.preventDefault();
+  const point = getCatchmindPointerPoint(event, canvas);
+  const points = state.catchmindDrawing.points;
+  const previous = points[points.length - 1];
+  if (!previous || Math.abs(previous.x - point.x) + Math.abs(previous.y - point.y) >= 0.003) {
+    points.push(point);
+    drawCatchmindLocalSegment(canvas, previous || point, point);
+  }
+  flushCatchmindStroke();
+  state.catchmindDrawing.active = false;
+}
+
+function drawCatchmindLocalSegment(canvas, from, to) {
+  const ctx = canvas.getContext("2d");
+  const width = canvas.clientWidth || 720;
+  const height = canvas.clientHeight || 420;
+  ctx.save();
+  ctx.lineCap = "round";
+  ctx.lineJoin = "round";
+  ctx.strokeStyle = state.catchmindDrawing.tool === "eraser" ? "#ffffff" : state.catchmindDrawing.color;
+  ctx.lineWidth = state.catchmindDrawing.size;
+  ctx.beginPath();
+  ctx.moveTo(from.x * width, from.y * height);
+  ctx.lineTo(to.x * width, to.y * height);
+  ctx.stroke();
+  ctx.restore();
+}
+
+function getCatchmindPointerPoint(event, canvas) {
+  const rect = canvas.getBoundingClientRect();
+  return {
+    x: Math.max(0, Math.min(1, (event.clientX - rect.left) / Math.max(1, rect.width))),
+    y: Math.max(0, Math.min(1, (event.clientY - rect.top) / Math.max(1, rect.height)))
+  };
+}
+
+function flushCatchmindStroke() {
+  const round = getCurrentCatchmindRound();
+  const drawing = state.catchmindDrawing;
+  if (!round || !drawing.strokeId || !drawing.points.length) {
+    return;
+  }
+  drawing.lastFlushAt = Date.now();
+  set(ref(db, `rooms/${state.roomCode}/catchmind/rounds/${round.roundId}/strokes/${drawing.strokeId}`), {
+    strokeId: drawing.strokeId,
+    createdBy: state.studentId,
+    color: drawing.color,
+    size: drawing.size,
+    tool: drawing.tool,
+    points: drawing.points,
+    createdAt: Number(drawing.strokeId.split("_")[1] || Date.now()),
+    updatedAt: Date.now()
+  }).catch((error) => {
+    console.error(error);
+    showToast("그림 동기화에 실패했습니다.", "error");
+  });
+}
+
+function setupCatchmindToolHandlers() {
+  document.querySelectorAll("[data-catchmind-color]").forEach((button) => {
+    button.addEventListener("click", () => {
+      state.catchmindTool = "pen";
+      state.catchmindColor = button.dataset.catchmindColor || "#111827";
+      renderCatchmindDrawerCanvas(true);
+    });
+  });
+  document.querySelectorAll("[data-catchmind-size]").forEach((button) => {
+    button.addEventListener("click", () => {
+      state.catchmindSize = Number(button.dataset.catchmindSize || 5);
+      renderCatchmindDrawerCanvas(true);
+    });
+  });
+  document.querySelector("[data-catchmind-tool='eraser']")?.addEventListener("click", () => {
+    state.catchmindTool = "eraser";
+    renderCatchmindDrawerCanvas(true);
+  });
+  document.querySelector("#catchmindUndoBtn")?.addEventListener("click", undoCatchmindStroke);
+  document.querySelector("#catchmindClearBtn")?.addEventListener("click", clearCatchmindCanvas);
+}
+
+async function undoCatchmindStroke() {
+  const round = getCurrentCatchmindRound();
+  const ownStrokes = getCatchmindStrokes()
+    .filter((stroke) => stroke.createdBy === state.studentId)
+    .sort((a, b) => Number(b.createdAt || 0) - Number(a.createdAt || 0));
+  if (!round || !ownStrokes.length) {
+    return;
+  }
+  await remove(ref(db, `rooms/${state.roomCode}/catchmind/rounds/${round.roundId}/strokes/${ownStrokes[0].strokeId}`));
+}
+
+async function clearCatchmindCanvas() {
+  const round = getCurrentCatchmindRound();
+  if (!round || !window.confirm("그림을 모두 지울까요?")) {
+    return;
+  }
+  await update(roomRef(state.roomCode), {
+    [`catchmind/rounds/${round.roundId}/strokes`]: null,
+    [`catchmind/rounds/${round.roundId}/clearVersion`]: Date.now()
+  });
+}
+
+function getCatchmindStrokes() {
+  const raw = getCurrentCatchmindRoundData().strokes || {};
+  return Object.entries(raw)
+    .map(([id, value]) => ({
+      strokeId: value.strokeId || id,
+      createdBy: value.createdBy || "",
+      color: value.color || "#111827",
+      size: Number(value.size || 5),
+      tool: value.tool || "pen",
+      points: normalizeCatchmindPoints(value.points),
+      createdAt: Number(value.createdAt || 0),
+      updatedAt: Number(value.updatedAt || 0)
+    }))
+    .filter((stroke) => stroke.points.length)
+    .sort((a, b) => a.createdAt - b.createdAt || String(a.strokeId).localeCompare(String(b.strokeId)));
+}
+
+function normalizeCatchmindPoints(points) {
+  const source = Array.isArray(points)
+    ? points
+    : Object.keys(points || {}).sort((a, b) => Number(a) - Number(b)).map((key) => points[key]);
+  return source
+    .map((point) => ({
+      x: Math.max(0, Math.min(1, Number(point?.x || 0))),
+      y: Math.max(0, Math.min(1, Number(point?.y || 0)))
+    }))
+    .filter((point) => Number.isFinite(point.x) && Number.isFinite(point.y));
+}
+
+function getCatchmindStrokeRenderKey() {
+  const strokes = getCatchmindStrokes();
+  const last = strokes[strokes.length - 1];
+  const round = getCurrentCatchmindRound();
+  const clearVersion = getCurrentCatchmindRoundData().clearVersion || 0;
+  return `${round?.roundId || "none"}:${strokes.length}:${last?.strokeId || "none"}:${last?.updatedAt || 0}:${clearVersion}`;
+}
+
 function renderFinalResult(viewName, showTeacherControls, force = false) {
   const ranking = getCumulativeRanking();
   const [first, second, third] = ranking;
@@ -2628,7 +4203,8 @@ async function enterTeacher() {
         compliments: {},
         answers: {},
         mafia: selectedMode === "mafia" ? getDefaultMafiaState() : null,
-        liar: selectedMode === "liar" ? getInitialLiarStateForWrite() : null
+        liar: selectedMode === "liar" ? getInitialLiarStateForWrite() : null,
+        catchmind: selectedMode === "catchmind" ? getInitialCatchmindStateForWrite() : null
       });
     } else {
       const room = snapshot.val();
@@ -2643,6 +4219,7 @@ async function enterTeacher() {
           complimentOrder: null,
           mafia: selectedMode === "mafia" ? getDefaultMafiaState() : null,
           liar: selectedMode === "liar" ? getInitialLiarStateForWrite() : null,
+          catchmind: selectedMode === "catchmind" ? getInitialCatchmindStateForWrite() : null,
           answers: null,
           complimentAnswers: null,
           complimentBonuses: null
@@ -3161,7 +4738,16 @@ function handleTeacherAction(action) {
     "liar-force-vote": forceCloseLiarVoting,
     "liar-reveal-answer": revealLiarAnswer,
     "liar-restart-same": () => startLiarGame({ reuseSettings: true }),
-    "liar-configure": configureLiarGame
+    "liar-configure": configureLiarGame,
+    "catchmind-save-settings": saveCatchmindSettings,
+    "catchmind-start-game": () => startCatchmindGame(),
+    "catchmind-drawer-ready": confirmCatchmindDrawerReady,
+    "catchmind-start-round": startCatchmindRound,
+    "catchmind-end-round": () => endCatchmindRound({ forced: true }),
+    "catchmind-next-round": nextCatchmindRound,
+    "catchmind-toggle-answer": toggleCatchmindTeacherAnswer,
+    "catchmind-restart-same": () => startCatchmindGame({ reuseSettings: true }),
+    "catchmind-configure": configureCatchmindGame
   };
   actions[action]?.();
 }
@@ -3342,7 +4928,7 @@ async function saveQuizSettings() {
     showToast(`학생 1명당 문제 수를 최대 ${value}개로 저장했습니다.`, "success");
   } catch (error) {
     console.error(error);
-    showToast("자기소개 퀴즈 설정을 저장하지 못했습니다.", "error");
+    showToast("퀴즈 배틀 설정을 저장하지 못했습니다.", "error");
   }
 }
 
@@ -4003,6 +5589,7 @@ async function resetGame() {
     complimentAnswers: null,
     mafia: getDefaultMafiaState(),
     liar: getDefaultLiarState(),
+    catchmind: getInitialCatchmindStateForWrite(),
     answers: null
   };
 
@@ -4047,6 +5634,7 @@ async function clearRoomLists() {
       compliments: null,
       mafia: getDefaultMafiaState(),
       liar: getDefaultLiarState(),
+      catchmind: getInitialCatchmindStateForWrite(),
       answers: null,
       complimentAnswers: null
     });
@@ -4167,6 +5755,8 @@ function subscribeToRoom(code) {
       if (state.room?.status === "finished") {
         if (getRoomMode() === "mafia") {
           renderMafiaFinalResult("teacher-mafia-final", true, true);
+        } else if (getRoomMode() === "catchmind") {
+          renderCatchmindFinalResult("teacher-catchmind-final", true, true);
         } else {
           renderFinalResult("teacher-final", true, true);
         }
@@ -4202,7 +5792,7 @@ function getSelectedTeacherMode() {
 }
 
 async function switchRoomMode(nextMode) {
-  if (!["quiz", "compliment", "mafia", "liar"].includes(nextMode)) {
+  if (!["quiz", "compliment", "mafia", "liar", "catchmind"].includes(nextMode)) {
     return;
   }
 
@@ -4225,6 +5815,7 @@ async function switchRoomMode(nextMode) {
       complimentOrder: null,
       mafia: nextMode === "mafia" ? getDefaultMafiaState() : null,
       liar: nextMode === "liar" ? getInitialLiarStateForWrite() : null,
+      catchmind: nextMode === "catchmind" ? getInitialCatchmindStateForWrite() : null,
       answers: null,
       complimentAnswers: null,
       complimentBonuses: null
@@ -4232,7 +5823,7 @@ async function switchRoomMode(nextMode) {
     showToast(`${modeLabel(nextMode)} 모드로 바꿨습니다.`, "success");
   } catch (error) {
     console.error(error);
-    showToast("게임 모드를 바꾸지 못했습니다. Firebase Rules에 liar 모드가 반영되었는지 확인해 주세요.", "error");
+    showToast("게임 모드를 바꾸지 못했습니다. Firebase Rules에 새 게임 모드가 반영되었는지 확인해 주세요.", "error");
   }
 }
 
@@ -4920,6 +6511,41 @@ function getMafiaGhostChatMessages({ teacher = false, ghost = null } = {}) {
     .sort((a, b) => a.createdAt - b.createdAt || String(a.messageId).localeCompare(String(b.messageId)));
 }
 
+function getGhostChatRenderKey({ teacher = false, ghost = null } = {}) {
+  const messages = getMafiaGhostChatMessages({ teacher, ghost });
+  const last = messages[messages.length - 1];
+  return `${messages.length}:${last?.messageId || "none"}:${last?.createdAt || 0}`;
+}
+
+function getGhostBingoRenderKey(ghost) {
+  if (!ghost) {
+    return "none";
+  }
+  const checked = ghost.checked || {};
+  const checkedKey = Object.keys(checked)
+    .filter((key) => checked[key])
+    .sort()
+    .join(".");
+  return [
+    Number(ghost.checkedCount || 0),
+    Number(ghost.bingoLines || 0),
+    ghost.firstBingoAt || 0,
+    checkedKey
+  ].join(":");
+}
+
+function captureGhostChatDraft() {
+  const input = document.querySelector("#ghostChatInput");
+  if (!input) {
+    return;
+  }
+  if (state.ghostChatSending) {
+    return;
+  }
+  state.ghostChatDraft = input.value;
+  state.ghostChatShouldFocus = document.activeElement === input;
+}
+
 function getGhostBingoCondition(conditionId) {
   return GHOST_BINGO_CONDITIONS.find((condition) => condition.id === conditionId) || null;
 }
@@ -5118,6 +6744,11 @@ function setupGhostChatHandlers() {
     return;
   }
 
+  input.value = state.ghostChatDraft || "";
+  button.disabled = state.ghostChatSending;
+  input.addEventListener("input", () => {
+    state.ghostChatDraft = input.value;
+  });
   button.addEventListener("click", sendGhostChatMessage);
   input.addEventListener("keydown", (event) => {
     if (event.key === "Enter") {
@@ -5129,9 +6760,10 @@ function setupGhostChatHandlers() {
 
 async function sendGhostChatMessage() {
   const input = document.querySelector("#ghostChatInput");
+  const button = document.querySelector("#ghostChatSendBtn");
   const player = getMafiaPlayer(state.studentId);
   const ghost = getMafiaGhost(state.studentId);
-  const content = cleanText(input?.value || "").slice(0, GHOST_CHAT_MAX_LENGTH);
+  const content = cleanText(input?.value || state.ghostChatDraft || "").slice(0, GHOST_CHAT_MAX_LENGTH);
 
   if (!input || !player || player.alive || !ghost) {
     showToast("유령만 채팅을 보낼 수 있습니다.", "error");
@@ -5148,13 +6780,26 @@ async function sendGhostChatMessage() {
     return;
   }
 
+  if (state.ghostChatSending) {
+    return;
+  }
+
   const now = Date.now();
   if (now - state.lastGhostChatAt < GHOST_CHAT_COOLDOWN_MS) {
     showToast("잠시 후 다시 보내 주세요.", "error");
     return;
   }
 
+  const previousDraft = state.ghostChatDraft || input.value || "";
+  state.ghostChatSending = true;
   state.lastGhostChatAt = now;
+  state.ghostChatDraft = "";
+  state.ghostChatShouldFocus = true;
+  input.value = "";
+  input.disabled = true;
+  if (button) {
+    button.disabled = true;
+  }
   const messageId = createGhostChatMessageId();
   try {
     await set(ref(db, `rooms/${state.roomCode}/mafia/ghostChat/${messageId}`), {
@@ -5166,18 +6811,42 @@ async function sendGhostChatMessage() {
       createdAt: now,
       round: getMafiaRoundNumber()
     });
-    input.value = "";
+    scrollGhostChatToBottom({ focusInput: true });
   } catch (error) {
     console.error(error);
+    state.ghostChatDraft = previousDraft;
+    state.lastGhostChatAt = 0;
+    if (document.querySelector("#ghostChatInput")) {
+      document.querySelector("#ghostChatInput").value = previousDraft;
+    }
     showToast("유령 채팅을 보내지 못했습니다.", "error");
+  } finally {
+    state.ghostChatSending = false;
+    const nextInput = document.querySelector("#ghostChatInput");
+    const nextButton = document.querySelector("#ghostChatSendBtn");
+    if (nextInput) {
+      nextInput.disabled = false;
+    }
+    if (nextButton) {
+      nextButton.disabled = false;
+    }
   }
 }
 
-function scrollGhostChatToBottom() {
+function scrollGhostChatToBottom({ focusInput = false } = {}) {
   const chatList = document.querySelector("#ghostChatList");
-  if (chatList) {
-    chatList.scrollTop = chatList.scrollHeight;
-  }
+  const input = document.querySelector("#ghostChatInput");
+  const apply = () => {
+    if (chatList) {
+      chatList.scrollTop = chatList.scrollHeight;
+    }
+    if (focusInput && input && !input.disabled) {
+      input.focus({ preventScroll: true });
+    }
+  };
+  apply();
+  requestAnimationFrame(apply);
+  window.setTimeout(apply, 80);
 }
 
 function getMafiaSelectablePlayers(selfId, { allowSelf = false } = {}) {
@@ -5578,12 +7247,13 @@ function mafiaWinnerText(winner) {
 
 function modeLabel(mode) {
   const labels = {
-    quiz: "자기소개 퀴즈 배틀",
+    quiz: "퀴즈 배틀",
     compliment: "칭찬 스무고개",
     mafia: "교실 마피아 게임",
-    liar: "라이어게임"
+    liar: "라이어게임",
+    catchmind: "캐치마인드"
   };
-  return labels[mode] || "자기소개 퀴즈 배틀";
+  return labels[mode] || "퀴즈 배틀";
 }
 
 function clampInt(value, min, max, fallback) {
@@ -5922,8 +7592,8 @@ function renderGhostChatPanel({ teacher = false, ghost = null, allowSend = false
       </div>
       ${allowSend ? `
         <div class="ghost-chat-form">
-          <input id="ghostChatInput" type="text" maxlength="${GHOST_CHAT_MAX_LENGTH}" placeholder="유령 채팅 입력" autocomplete="off" />
-          <button class="btn primary" id="ghostChatSendBtn" type="button">전송</button>
+          <input id="ghostChatInput" type="text" maxlength="${GHOST_CHAT_MAX_LENGTH}" placeholder="유령 채팅 입력" autocomplete="off" value="${escapeAttr(state.ghostChatDraft)}" ${state.ghostChatSending ? "disabled" : ""} />
+          <button class="btn primary" id="ghostChatSendBtn" type="button" ${state.ghostChatSending ? "disabled" : ""}>전송</button>
         </div>
         <p class="muted small">엔터로 전송할 수 있습니다. 최대 ${GHOST_CHAT_MAX_LENGTH}자입니다.</p>
       ` : teacher ? `<p class="muted small">교사 화면에서는 전체 유령 채팅을 읽기 전용으로 확인합니다.</p>` : ""}
@@ -6037,10 +7707,11 @@ function renderTeacherModeControls() {
     <section class="mode-switcher">
       <p class="label">게임 모드</p>
       <div class="segmented">
-        <button class="btn ${mode === "quiz" ? "primary" : "ghost"}" data-switch-mode="quiz" type="button" ${canSwitch ? "" : "disabled"}>자기소개 퀴즈</button>
+        <button class="btn ${mode === "quiz" ? "primary" : "ghost"}" data-switch-mode="quiz" type="button" ${canSwitch ? "" : "disabled"}>퀴즈 배틀</button>
         <button class="btn ${mode === "compliment" ? "primary" : "ghost"}" data-switch-mode="compliment" type="button" ${canSwitch ? "" : "disabled"}>칭찬 스무고개</button>
         <button class="btn ${mode === "mafia" ? "primary" : "ghost"}" data-switch-mode="mafia" type="button" ${canSwitch ? "" : "disabled"}>교실 마피아</button>
         <button class="btn ${mode === "liar" ? "primary" : "ghost"}" data-switch-mode="liar" type="button" ${canSwitch ? "" : "disabled"}>라이어게임</button>
+        <button class="btn ${mode === "catchmind" ? "primary" : "ghost"}" data-switch-mode="catchmind" type="button" ${canSwitch ? "" : "disabled"}>캐치마인드</button>
       </div>
       ${canSwitch ? "" : `<p class="muted small">게임 진행 중에는 모드를 바꿀 수 없습니다.</p>`}
     </section>
@@ -6710,6 +8381,7 @@ function saveStudentSession() {
 function statusLabel(status) {
   const labels = {
     waiting: "대기 중",
+    ready: "라운드 준비",
     playing: "진행 중",
     result: "결과 공개",
     targetReveal: "칭찬 대상 공개",
@@ -6731,6 +8403,7 @@ function statusLabel(status) {
 function statusPillClass(status) {
   const classes = {
     waiting: "blue",
+    ready: "blue",
     playing: "green",
     result: "gold",
     targetReveal: "gold",

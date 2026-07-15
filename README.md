@@ -4,10 +4,11 @@
 
 지원 모드:
 
-1. 자기소개 퀴즈 배틀: 학생이 자기소개 4지선다 문제를 만들고 친구들이 풉니다.
+1. 퀴즈 배틀: 학생이 자기소개 4지선다 문제를 만들고 친구들이 풉니다.
 2. 칭찬 스무고개: 학생이 특정 친구에 대한 칭찬 단서를 만들고 친구들이 대상과 작성자를 추리합니다.
 3. 교실 마피아 게임: 역할 확인, 밤 행동, 낮 토론, 투표를 패드로 진행합니다.
 4. 라이어게임: 비슷한 제시어 속 숨어 있는 라이어를 대화와 투표로 추리합니다.
+5. 캐치마인드: 출제자가 그리는 그림을 실시간으로 보고 제시어를 맞힙니다.
 
 ## 1. 파일 구조
 
@@ -42,6 +43,7 @@ const VOTE_TIE_RULE = "revote_then_skip";
 const REVEAL_ROLE_ON_ELIMINATION = true;
 const MAFIA_SELF_SELECT_ALLOWED = false;
 const DEFAULT_LIAR_COUNT = 2;
+const DEFAULT_CATCHMIND_ROUND_SECONDS = 60;
 const GHOST_BINGO_REQUIRED_CONDITIONS = 8;
 const GHOST_CHAT_MAX_LENGTH = 100;
 const GHOST_CHAT_COOLDOWN_MS = 1000;
@@ -67,8 +69,8 @@ const GHOST_CHAT_COOLDOWN_MS = 1000;
 ```text
 rooms
   roomCode
-    mode: quiz | compliment | mafia | liar
-    status: waiting | playing | result | targetReveal | authorGuess | authorReveal
+    mode: quiz | compliment | mafia | liar | catchmind
+    status: waiting | ready | playing | result | targetReveal | authorGuess | authorReveal
             roleAssigned | roleReveal | nightAction | nightResult
             discussion | voting | voteResult | roleRevealDead | finished
     maxQuestionsPerStudent
@@ -180,14 +182,38 @@ rooms
       voteOpenedAt
       voteResultOpenedAt
       revealedAt
+
+    catchmind
+      settings
+        wordsText
+        wordList
+        roundDuration
+        totalRounds
+      gameId
+      currentRoundIndex
+      drawerOrder
+      wordOrder
+      currentRound
+        roundId
+        drawerId
+        drawerName
+        word
+        roundStartedAt
+        roundEndsAt
+      rounds
+        roundId
+          strokes
+          correctAnswers
+          wrongAnswers
+          scoreApplied
 ```
 
-## 5. 자기소개 퀴즈 배틀 사용 방법
+## 5. 퀴즈 배틀 사용 방법
 
 교사:
 
 1. 교사로 입장합니다.
-2. 게임 모드에서 자기소개 퀴즈 배틀을 선택합니다.
+2. 게임 모드에서 퀴즈 배틀을 선택합니다.
 3. 방 코드를 학생들에게 알려 줍니다.
 4. 제출 문제 수와 학생 목록을 확인합니다.
 5. 필요하면 제출 설정에서 학생 1명당 최대 문제 수를 바꾸고 설정 저장을 누릅니다.
@@ -318,12 +344,35 @@ rooms
 
 보안 참고: 현재 MVP는 정적 웹앱이기 때문에 라이어 정답을 화면에서는 숨기지만, Firebase 방 데이터를 읽을 수 있는 사람에게 데이터베이스 수준으로 완전히 숨기는 구조는 아닙니다. 실제 비밀 유지가 중요한 운영에서는 Firebase Authentication과 Cloud Functions 같은 서버 검증을 추가해야 합니다.
 
-## 9. 초기화 버튼 차이
+## 9. 캐치마인드 사용 방법
+
+교사:
+
+1. 교사로 입장합니다.
+2. 게임 모드에서 캐치마인드를 선택합니다.
+3. 한 줄에 하나씩 제시어를 입력하고 제한 시간, 라운드 수를 정합니다.
+4. 게임 시작을 누르면 출제자 순서와 제시어 순서가 무작위로 고정됩니다.
+5. 출제자가 제시어를 확인하고 준비 완료를 누르면 라운드 시작을 누릅니다.
+6. 진행 중에는 정답자, 미정답자, 최근 오답, 그림 화면을 확인합니다.
+7. 시간이 끝나거나 라운드 강제 종료를 누르면 점수가 한 번만 확정되고 결과가 공개됩니다.
+8. 다음 라운드 또는 최종 결과로 이동합니다.
+
+학생:
+
+1. 출제자로 뽑히면 제시어를 확인하고 그림으로만 표현합니다.
+2. 다른 학생은 실시간 그림을 보며 정답을 입력합니다.
+3. 30초 남으면 글자 수, 10초 남으면 초성 힌트가 자동으로 보입니다.
+4. 정답 순서대로 1등 3점, 2등 2점, 3등 이후 1점을 받습니다.
+5. 출제자는 정답자 비율에 따라 0~3점을 받습니다.
+
+보안 참고: 현재 MVP는 정적 웹앱이라 화면에서는 출제자에게만 제시어를 보여 주지만, Firebase 방 데이터를 직접 읽는 수준까지 완전히 막는 구조는 아닙니다. 실제 비밀 유지가 중요하면 인증과 서버 검증을 추가하세요.
+
+## 10. 초기화 버튼 차이
 
 - 게임 초기화: 점수와 답변, 진행 상태, 마피아 유령 목록, 유령 빙고, 유령 채팅을 지웁니다. 학생 목록과 제출 자료는 유지됩니다.
-- 학생/자료 목록 초기화: 학생 목록, 문제 목록, 칭찬 카드, 마피아 진행 데이터, 라이어게임 진행 데이터, 유령 데이터, 답변, 점수, 진행 상태를 모두 지웁니다.
+- 학생/자료 목록 초기화: 학생 목록, 문제 목록, 칭찬 카드, 마피아 진행 데이터, 라이어게임 진행 데이터, 캐치마인드 진행 데이터, 유령 데이터, 답변, 점수, 진행 상태를 모두 지웁니다.
 
-## 10. 보안 주의사항
+## 11. 보안 주의사항
 
 현재 MVP는 정적 웹앱이고 Realtime Database를 방 단위로 구독합니다. 그래서 생존자 화면에는 유령 채팅 UI를 렌더링하지 않지만, Firebase 규칙과 인증을 세밀하게 나누지 않는 한 개발자 도구 수준에서 데이터를 완전히 숨기는 구조는 아닙니다.
 
@@ -331,7 +380,7 @@ rooms
 
 실제 장기 운영용으로 강화하려면 Firebase Authentication으로 학생/교사 계정을 구분하고, 유령 채팅이나 라이어 정답 데이터를 별도 경로로 분리한 뒤 필요한 사용자만 읽을 수 있는 보안 규칙 또는 Cloud Functions 검증을 추가하세요.
 
-## 11. 로컬 테스트 방법
+## 12. 로컬 테스트 방법
 
 미리보기 서버는 자동으로 실행하지 않았습니다. 파일을 받은 뒤 원하는 포트로 직접 정적 서버를 실행하세요.
 
@@ -341,7 +390,7 @@ python -m http.server 5500
 
 브라우저에서 `http://localhost:5500`으로 접속합니다.
 
-## 12. 배포 방법
+## 13. 배포 방법
 
 GitHub Pages:
 
@@ -357,7 +406,7 @@ Netlify:
 2. 파일이 들어 있는 폴더를 끌어다 놓습니다.
 3. 배포 주소를 학생들에게 공유합니다.
 
-## 13. 나중에 추가하면 좋은 기능
+## 14. 나중에 추가하면 좋은 기능
 
 - 교사용 QR 코드 자동 생성
 - Firebase Authentication 기반 교사 권한 분리
@@ -367,6 +416,8 @@ Netlify:
 - 마피아 재투표 세부 규칙
 - 라이어게임 단어 세트 저장
 - 라이어게임 교사용 서버 비밀 저장
+- 캐치마인드 제시어 카테고리 저장
+- 캐치마인드 그림 데이터 자동 정리
 - 유령 채팅 메시지 삭제 또는 채팅 잠금
 - 교사용 마피아 진행 로그 다운로드
 - 부적절한 단어 자동 경고
