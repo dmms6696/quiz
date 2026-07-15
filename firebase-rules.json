@@ -147,16 +147,16 @@
             }
           },
           "startedAt": {
-            ".validate": "newData.isNumber()"
+            ".validate": "!newData.exists() || newData.isNumber()"
           },
           "voteOpenedAt": {
-            ".validate": "newData.isNumber()"
+            ".validate": "!newData.exists() || newData.isNumber()"
           },
           "voteResultOpenedAt": {
-            ".validate": "newData.isNumber()"
+            ".validate": "!newData.exists() || newData.isNumber()"
           },
           "revealedAt": {
-            ".validate": "newData.isNumber()"
+            ".validate": "!newData.exists() || newData.isNumber()"
           }
         },
         "answers": {

@@ -4232,7 +4232,7 @@ async function switchRoomMode(nextMode) {
     showToast(`${modeLabel(nextMode)} 모드로 바꿨습니다.`, "success");
   } catch (error) {
     console.error(error);
-    showToast("게임 모드를 바꾸지 못했습니다.", "error");
+    showToast("게임 모드를 바꾸지 못했습니다. Firebase Rules에 liar 모드가 반영되었는지 확인해 주세요.", "error");
   }
 }
 
