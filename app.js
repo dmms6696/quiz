@@ -311,9 +311,12 @@ function enterDisplayMode(roomCode) {
 function renderHome() {
   clearRoomSubscription();
   clearTimer();
+  closeSeatConfirmModal();
   state.role = null;
   state.room = null;
   state.activeView = "home";
+  state.seatSettingsDraft = null;
+  state.seatInteractionKey = "";
 
   const savedRoom = localStorage.getItem("wbq_roomCode") || "";
   const savedName = localStorage.getItem("wbq_studentName") || "";
@@ -332,7 +335,7 @@ function renderHome() {
         </div>
       `}
 
-      <div class="grid-2">
+      <div class="grid-2 home-entry-grid">
         <section class="panel">
           <div>
             <h2>학생으로 입장</h2>
@@ -2813,7 +2816,7 @@ function renderCatchmindRoundResult(viewName, showTeacherControls, force = false
         <h1>${escapeHtml(round.word)}</h1>
         <p class="lead">출제자: ${escapeHtml(round.drawerName)}</p>
       </section>
-      <div class="grid-2 home-entry-grid">
+      <div class="grid-2">
         <section class="panel">
           <h2>정답 순위</h2>
           ${renderCatchmindCorrectRanking()}
@@ -4225,11 +4228,6 @@ function getSeatForStudent(studentId, assignments = getSeatGameState().assignmen
   return entry ? getSeatNumberFromKey(entry[0]) : null;
 }
 
-function getSeatOwnerStudent(seatNumber, game = getSeatGameState()) {
-  const ownerId = game.assignments[getSeatKey(seatNumber)];
-  return getStudents().find((student) => student.id === ownerId) || null;
-}
-
 function getSeatCurrentPlayerId(game = getSeatGameState()) {
   return game.selectionOrder[game.currentSelectionIndex] || "";
 }
@@ -4392,6 +4390,7 @@ function renderSeatStudentSelection(force = false) {
         <span class="pill ${isMyTurn ? "green" : "blue"}">${currentNumber}/${game.selectionOrder.length}번째 선택</span>
       </div>
       ${renderSeatPrivateNotice(game)}
+      ${renderSeatPublicEvent(game.lastPublicEvent)}
       <section class="panel seat-panel result-panel">
         ${isMyTurn && !mySeat ? `
           <span class="pill green">지금 당신의 차례입니다!</span>
@@ -4404,6 +4403,7 @@ function renderSeatStudentSelection(force = false) {
       </section>
       ${renderSeatGrid({ game, interactive: isMyTurn && !mySeat })}
       ${renderSeatMySeatPanel(game)}
+      ${game.settings.cardEnabled ? `<section class="panel seat-card-panel">${renderSeatStudentCard(game)}</section>` : ""}
     </section>
   `, () => setupSeatStudentSelectionHandlers(isMyTurn && !mySeat), force);
 }
@@ -4439,7 +4439,8 @@ function renderSeatStudentCardPhase(force = false) {
     setupSeatStudentCardHandlers();
     setupSeatCardPhaseTimer({
       textSelector: "#seatStudentCardTimer",
-      fillSelector: "#seatStudentCardTimerFill"
+      fillSelector: "#seatStudentCardTimerFill",
+      onEnd: () => endSeatCardPhase({ silent: true })
     });
   }, force);
 }
@@ -4546,7 +4547,7 @@ function renderSeatTeacherDashboard(force = true) {
       setupSeatCardPhaseTimer({
         textSelector: "#seatTeacherCardTimer",
         fillSelector: "#seatTeacherCardTimerFill",
-        onEnd: endSeatCardPhase
+        onEnd: () => endSeatCardPhase({ silent: true })
       });
     }
   }, force);
@@ -4628,7 +4629,7 @@ function renderSeatDisplay(force = false) {
       ${renderSeatGrid({ game, reveal: true, revealAll: status === "finished" })}
     `, () => {
       if (status === "finalReveal") {
-        setupSeatFinalRevealAnimation({ teacher: false });
+        setupSeatFinalRevealAnimation();
       }
     }, force);
     return;
@@ -4659,7 +4660,11 @@ function renderSeatDisplay(force = false) {
       ${renderSeatPublicEvent(game.lastPublicEvent)}
       ${renderSeatGrid({ game })}
     `;
-    afterRender = () => setupSeatCardPhaseTimer({ textSelector: "#seatDisplayCardTimer", fillSelector: "#seatDisplayCardTimerFill" });
+    afterRender = () => setupSeatCardPhaseTimer({
+      textSelector: "#seatDisplayCardTimer",
+      fillSelector: "#seatDisplayCardTimerFill",
+      onEnd: () => endSeatCardPhase({ silent: true })
+    });
   } else if (status === "finalReady") {
     title = "모든 자리가 확정되었습니다.";
     subtitle = "선생님이 최종 자리 공개를 준비하고 있습니다.";
@@ -4694,7 +4699,7 @@ function renderSeatFinalResult(viewName, showTeacherControls, force = false) {
     document.querySelectorAll("[data-action]").forEach((button) => button.addEventListener("click", () => handleTeacherAction(button.dataset.action)));
     document.querySelector("#backHomeBtn")?.addEventListener("click", renderHome);
     if (revealing) {
-      setupSeatFinalRevealAnimation({ teacher: showTeacherControls });
+      setupSeatFinalRevealAnimation();
     }
   }, force);
 }
@@ -4819,6 +4824,644 @@ function renderSeatCardHistory(game) {
     return `<div class="empty">아직 사용된 카드가 없습니다.</div>`;
   }
   return `<ol class="list">${history.map((action) => `<li class="list-row"><div><strong>${escapeHtml(getSeatCardDefinition(action.type).name)}</strong><p class="muted small">${escapeHtml(action.message || "카드 효과가 적용되었습니다.")}</p></div></li>`).join("")}</ol>`;
+}
+
+function setupSeatTeacherHandlers(status) {
+  document.querySelector("#backHomeBtn")?.addEventListener("click", renderHome);
+  document.querySelector("#copyRoomCodeBtn")?.addEventListener("click", copyRoomCode);
+  document.querySelectorAll("[data-switch-mode]").forEach((button) => {
+    button.addEventListener("click", () => switchRoomMode(button.dataset.switchMode));
+  });
+  document.querySelectorAll("[data-action]").forEach((button) => {
+    button.addEventListener("click", () => handleTeacherAction(button.dataset.action));
+  });
+  if (status !== "waiting") {
+    return;
+  }
+  ["#seatRowsInput", "#seatColumnsInput", "#seatCardEnabledInput", "#seatCardPhaseSecondsInput"].forEach((selector) => {
+    document.querySelector(selector)?.addEventListener("change", () => {
+      state.seatSettingsDraft = readSeatSettingsFromForm();
+      renderSeatTeacherDashboard(true);
+    });
+  });
+  document.querySelectorAll("[data-seat-toggle-disabled]").forEach((button) => {
+    button.addEventListener("click", () => toggleSeatSetupDisabled(Number(button.dataset.seatToggleDisabled)));
+  });
+}
+
+function readSeatSettingsFromForm() {
+  const current = getSeatSettingsDraft();
+  return normalizeSeatGameSettings({
+    rows: document.querySelector("#seatRowsInput")?.value ?? current.rows,
+    columns: document.querySelector("#seatColumnsInput")?.value ?? current.columns,
+    disabledSeats: current.disabledSeats,
+    cardEnabled: document.querySelector("#seatCardEnabledInput")?.checked ?? current.cardEnabled,
+    cardPhaseSeconds: document.querySelector("#seatCardPhaseSecondsInput")?.value ?? current.cardPhaseSeconds
+  });
+}
+
+function toggleSeatSetupDisabled(seatNumber) {
+  const draft = readSeatSettingsFromForm();
+  const disabledSeats = { ...draft.disabledSeats };
+  if (disabledSeats[seatNumber]) {
+    delete disabledSeats[seatNumber];
+  } else {
+    disabledSeats[seatNumber] = true;
+  }
+  state.seatSettingsDraft = normalizeSeatGameSettings({ ...draft, disabledSeats });
+  renderSeatTeacherDashboard(true);
+}
+
+async function saveSeatGameSettings() {
+  if ((state.room?.status || "waiting") !== "waiting") {
+    showToast("게임 시작 전 대기 상태에서만 설정을 바꿀 수 있습니다.", "error");
+    return;
+  }
+  const settings = readSeatSettingsFromForm();
+  state.seatSettingsDraft = settings;
+  try {
+    await set(ref(db, `rooms/${state.roomCode}/seatGame/settings`), settings);
+    showToast("교실 자리 설정을 저장했습니다.", "success");
+  } catch (error) {
+    console.error(error);
+    showToast("자리 설정을 저장하지 못했습니다.", "error");
+  }
+}
+
+function buildSeatPlayerCards(studentIds) {
+  const types = ["swap", "move", "randomSwap", "protect"];
+  const deck = shuffleArray(studentIds.map((_, index) => types[index % types.length]));
+  const assignedAt = Date.now();
+  return Object.fromEntries(studentIds.map((studentId, index) => [studentId, {
+    type: deck[index],
+    used: false,
+    assignedAt
+  }]));
+}
+
+async function startSeatGame({ reuseSettings = false } = {}) {
+  const students = getStudents();
+  const settings = reuseSettings ? getSeatGameSettings() : readSeatSettingsFromForm();
+  const activeSeats = getSeatActiveNumbers(settings);
+  if (!students.length) {
+    showToast("게임에 참여할 학생이 없습니다.", "error");
+    return;
+  }
+  if (activeSeats.length !== students.length) {
+    showToast(`참가 학생은 ${students.length}명이지만 사용 가능한 자리는 ${activeSeats.length}개입니다.`, "error");
+    return;
+  }
+
+  const selectionOrder = shuffleArray(students.map((student) => student.id));
+  const gameId = `seat_${Date.now()}_${Math.random().toString(16).slice(2, 8)}`;
+  const seatGame = {
+    settings,
+    gameId,
+    selectionOrder,
+    currentSelectionIndex: 0,
+    assignments: {},
+    playerCards: settings.cardEnabled ? buildSeatPlayerCards(selectionOrder) : {},
+    protectedPlayerIds: {},
+    notifications: {},
+    cardActionHistory: {},
+    cardPhaseStartedAt: 0,
+    cardPhaseEndsAt: 0,
+    lastPublicEvent: {
+      id: `start_${Date.now()}`,
+      title: "자리 선택 시작",
+      message: "첫 번째 자리 선택이 진행 중입니다.",
+      createdAt: Date.now()
+    },
+    finalRevealStartedAt: 0,
+    finalRevealOrder: []
+  };
+
+  openDisplayWindow();
+  state.seatSettingsDraft = settings;
+  state.seatInteractionKey = "";
+  try {
+    await update(roomRef(state.roomCode), {
+      status: "seatSelection",
+      finishedAt: null,
+      seatGame
+    });
+    showToast("자리바꾸기 게임을 시작했습니다.", "success");
+  } catch (error) {
+    console.error(error);
+    showToast("자리바꾸기 게임을 시작하지 못했습니다.", "error");
+  }
+}
+
+async function configureSeatGame() {
+  const ok = window.confirm("현재 자리 결과와 카드 사용 기록을 지우고 설정 화면으로 돌아갈까요?");
+  if (!ok) {
+    return;
+  }
+  const settings = getSeatGameSettings();
+  state.seatSettingsDraft = settings;
+  state.seatInteractionKey = "";
+  try {
+    await update(roomRef(state.roomCode), {
+      status: "waiting",
+      finishedAt: null,
+      seatGame: getInitialSeatGameStateForWrite(settings)
+    });
+    showToast("자리바꾸기 설정 화면으로 돌아왔습니다.", "success");
+  } catch (error) {
+    console.error(error);
+    showToast("설정 화면으로 돌아가지 못했습니다.", "error");
+  }
+}
+
+function setupSeatStudentSelectionHandlers(canSelect) {
+  setupSeatNoticeDismissHandler();
+  if (!canSelect) {
+    return;
+  }
+  document.querySelectorAll("[data-seat-select]").forEach((button) => {
+    button.addEventListener("click", () => {
+      const seatNumber = Number(button.dataset.seatSelect);
+      showSeatConfirmModal({
+        title: `${seatNumber}번 자리를 선택할까요?`,
+        detail: "확정한 뒤에는 일반적인 방법으로 변경할 수 없습니다.",
+        cancelLabel: "다시 고르기",
+        confirmLabel: "자리 선택 확정",
+        onConfirm: () => confirmSeatSelection(seatNumber)
+      });
+    });
+  });
+}
+
+async function confirmSeatSelection(seatNumber) {
+  let failureReason = "자리를 선택하지 못했습니다. 현재 자리 상태를 다시 확인해 주세요.";
+  const now = Date.now();
+  try {
+    const result = await runTransaction(roomRef(state.roomCode), (room) => {
+      if (!room || room.mode !== "seat" || room.status !== "seatSelection") {
+        failureReason = "현재는 자리 선택 시간이 아닙니다.";
+        return;
+      }
+      const game = normalizeSeatGameRecord(room.seatGame || {});
+      const currentPlayerId = getSeatCurrentPlayerId(game);
+      if (currentPlayerId !== state.studentId) {
+        failureReason = "현재 내 차례가 아닙니다.";
+        return;
+      }
+      if (getSeatForStudent(state.studentId, game.assignments)) {
+        failureReason = "이미 자리를 선택했습니다.";
+        return;
+      }
+      const activeSeats = getSeatActiveNumbers(game.settings);
+      const seatKey = getSeatKey(seatNumber);
+      if (!activeSeats.includes(seatNumber) || game.assignments[seatKey]) {
+        failureReason = "방금 다른 학생이 선택한 자리입니다. 다른 자리를 골라 주세요.";
+        return;
+      }
+      if (Object.keys(game.assignments).length !== game.currentSelectionIndex || !validateSeatAssignments(game)) {
+        failureReason = "자리 데이터가 갱신 중입니다. 잠시 후 다시 시도해 주세요.";
+        return;
+      }
+
+      game.assignments[seatKey] = state.studentId;
+      game.lastPublicEvent = {
+        id: `seat_selected_${now}_${seatNumber}`,
+        title: "자리 선택 완료",
+        message: `${seatNumber}번 자리가 선택되었습니다.`,
+        seatNumbers: [seatNumber],
+        createdAt: now
+      };
+      if (!validateSeatAssignments(game)) {
+        failureReason = "자리 배정 검증에 실패했습니다.";
+        return;
+      }
+
+      const isLast = game.currentSelectionIndex >= game.selectionOrder.length - 1;
+      if (game.settings.cardEnabled) {
+        room.status = "cardPhase";
+        game.cardPhaseStartedAt = now;
+        game.cardPhaseEndsAt = now + game.settings.cardPhaseSeconds * 1000;
+      } else if (isLast) {
+        room.status = "finalReady";
+      } else {
+        game.currentSelectionIndex += 1;
+        room.status = "seatSelection";
+      }
+      room.seatGame = game;
+      return room;
+    });
+    closeSeatConfirmModal();
+    if (!result.committed) {
+      showToast(failureReason, "error");
+      return;
+    }
+    showToast(`${seatNumber}번 자리를 선택했습니다.`, "success");
+  } catch (error) {
+    console.error(error);
+    closeSeatConfirmModal();
+    showToast("자리 선택 중 오류가 발생했습니다.", "error");
+  }
+}
+
+function setupSeatStudentCardHandlers() {
+  setupSeatNoticeDismissHandler();
+  document.querySelector("#seatUseCardBtn")?.addEventListener("click", () => {
+    state.seatCardTargetMode = true;
+    state.seatCardTargetSeats = [];
+    renderSeatStudentCardPhase(true);
+  });
+  document.querySelector("#seatCancelCardBtn")?.addEventListener("click", () => {
+    state.seatCardTargetMode = false;
+    state.seatCardTargetSeats = [];
+    renderSeatStudentCardPhase(true);
+  });
+  document.querySelectorAll("[data-seat-card-target]").forEach((button) => {
+    button.addEventListener("click", () => toggleSeatCardTarget(Number(button.dataset.seatCardTarget)));
+  });
+  document.querySelector("#seatConfirmCardBtn")?.addEventListener("click", confirmSeatCardUse);
+}
+
+function toggleSeatCardTarget(seatNumber) {
+  const game = getSeatGameState();
+  const card = getMySeatCard(game);
+  const maxTargets = card?.type === "swap" ? 2 : 1;
+  const selected = new Set(state.seatCardTargetSeats.map(Number));
+  if (selected.has(seatNumber)) {
+    selected.delete(seatNumber);
+  } else {
+    if (selected.size >= maxTargets) {
+      selected.clear();
+    }
+    selected.add(seatNumber);
+  }
+  state.seatCardTargetSeats = Array.from(selected);
+  renderSeatStudentCardPhase(true);
+}
+
+function confirmSeatCardUse() {
+  const game = getSeatGameState();
+  const card = getMySeatCard(game);
+  if (!card || card.used) {
+    showToast("사용할 수 있는 카드가 없습니다.", "error");
+    return;
+  }
+  const definition = getSeatCardDefinition(card.type);
+  let detail = definition.description;
+  if (card.type === "swap") {
+    detail = `${state.seatCardTargetSeats[0]}번 자리와 ${state.seatCardTargetSeats[1]}번 자리의 주인을 서로 바꿉니다.`;
+  } else if (card.type === "move") {
+    detail = `내 현재 자리에서 ${state.seatCardTargetSeats[0]}번 자리로 이동합니다.`;
+  } else if (card.type === "randomSwap") {
+    detail = "시스템이 보호되지 않은 자리 두 곳을 무작위로 골라 서로 바꿉니다.";
+  } else if (card.type === "protect") {
+    detail = "내 현재 자리를 게임 종료까지 카드 효과로부터 보호합니다.";
+  }
+  showSeatConfirmModal({
+    title: `${definition.name} 카드를 사용할까요?`,
+    detail,
+    confirmLabel: "카드 사용 확정",
+    onConfirm: applySeatCard
+  });
+}
+
+async function applySeatCard() {
+  const currentGame = getSeatGameState();
+  const currentCard = getMySeatCard(currentGame);
+  if (!currentCard) {
+    closeSeatConfirmModal();
+    return;
+  }
+  const requestedTargets = state.seatCardTargetSeats.map(Number);
+  if (currentCard.type === "randomSwap") {
+    const eligible = getSeatCardEligibility(currentCard, state.studentId, currentGame).targetSeats;
+    requestedTargets.splice(0, requestedTargets.length, ...shuffleArray(eligible).slice(0, 2));
+  }
+
+  const actionId = `card_${Date.now()}_${Math.random().toString(16).slice(2, 8)}`;
+  const createdAt = Date.now();
+  let failureReason = "카드를 사용하지 못했습니다. 현재 자리 상태를 다시 확인해 주세요.";
+  try {
+    const result = await runTransaction(roomRef(state.roomCode), (room) => {
+      if (!room || room.mode !== "seat" || room.status !== "cardPhase") {
+        failureReason = "현재는 카드 활용 시간이 아닙니다.";
+        return;
+      }
+      const game = normalizeSeatGameRecord(room.seatGame || {});
+      const card = { ...(game.playerCards[state.studentId] || {}) };
+      if (!card.type || card.used) {
+        failureReason = "이미 사용했거나 존재하지 않는 카드입니다.";
+        return;
+      }
+      if (!game.selectionOrder.includes(state.studentId) || !validateSeatAssignments(game)) {
+        failureReason = "참가자 또는 자리 정보가 올바르지 않습니다.";
+        return;
+      }
+
+      const activeSeats = new Set(getSeatActiveNumbers(game.settings));
+      const assignments = { ...game.assignments };
+      const protectedIds = { ...game.protectedPlayerIds };
+      const notifications = { ...game.notifications };
+      let publicMessage = "카드 효과가 적용되었습니다.";
+
+      const moveNotice = (studentId, oldSeat, newSeat) => {
+        notifications[studentId] = {
+          id: `${actionId}_${studentId}`,
+          oldSeat,
+          newSeat,
+          createdAt
+        };
+      };
+
+      if (card.type === "swap" || card.type === "randomSwap") {
+        const [seatA, seatB] = requestedTargets;
+        const ownerA = assignments[getSeatKey(seatA)];
+        const ownerB = assignments[getSeatKey(seatB)];
+        if (!seatA || !seatB || seatA === seatB || !activeSeats.has(seatA) || !activeSeats.has(seatB) || !ownerA || !ownerB) {
+          failureReason = "교환할 수 있는 선택 완료 자리 두 곳이 필요합니다.";
+          return;
+        }
+        if (protectedIds[ownerA] || protectedIds[ownerB]) {
+          failureReason = "보호된 자리는 교환할 수 없습니다.";
+          return;
+        }
+        assignments[getSeatKey(seatA)] = ownerB;
+        assignments[getSeatKey(seatB)] = ownerA;
+        moveNotice(ownerA, seatA, seatB);
+        moveNotice(ownerB, seatB, seatA);
+        publicMessage = `${seatA}번 자리와 ${seatB}번 자리의 주인이 서로 바뀌었습니다.`;
+      } else if (card.type === "move") {
+        const newSeat = requestedTargets[0];
+        const oldSeat = getSeatForStudent(state.studentId, assignments);
+        if (!oldSeat || !newSeat || !activeSeats.has(newSeat) || assignments[getSeatKey(newSeat)]) {
+          failureReason = "이동할 수 있는 빈자리를 다시 선택해 주세요.";
+          return;
+        }
+        if (protectedIds[state.studentId]) {
+          failureReason = "보호된 내 자리는 이동할 수 없습니다.";
+          return;
+        }
+        delete assignments[getSeatKey(oldSeat)];
+        assignments[getSeatKey(newSeat)] = state.studentId;
+        moveNotice(state.studentId, oldSeat, newSeat);
+        publicMessage = `${oldSeat}번 자리가 다시 선택 가능해졌고 ${newSeat}번 자리가 선택되었습니다.`;
+      } else if (card.type === "protect") {
+        const mySeat = getSeatForStudent(state.studentId, assignments);
+        if (!mySeat || protectedIds[state.studentId]) {
+          failureReason = "내 자리를 선택한 뒤 한 번만 보호할 수 있습니다.";
+          return;
+        }
+        protectedIds[state.studentId] = true;
+        publicMessage = `${mySeat}번 자리가 보호되었습니다.`;
+      } else {
+        failureReason = "알 수 없는 카드입니다.";
+        return;
+      }
+
+      game.assignments = assignments;
+      game.protectedPlayerIds = protectedIds;
+      game.notifications = notifications;
+      game.playerCards[state.studentId] = {
+        ...card,
+        used: true,
+        usedAt: createdAt
+      };
+      game.cardActionHistory[actionId] = {
+        id: actionId,
+        type: card.type,
+        seatNumbers: requestedTargets,
+        message: publicMessage,
+        createdAt
+      };
+      game.lastPublicEvent = {
+        id: actionId,
+        title: "카드 발동!",
+        message: publicMessage,
+        seatNumbers: requestedTargets,
+        createdAt
+      };
+      if (!validateSeatAssignments(game)) {
+        failureReason = "카드 적용 후 자리 배정 검증에 실패했습니다.";
+        return;
+      }
+      room.seatGame = game;
+      return room;
+    });
+
+    closeSeatConfirmModal();
+    if (!result.committed) {
+      showToast(failureReason, "error");
+      return;
+    }
+    state.seatCardTargetMode = false;
+    state.seatCardTargetSeats = [];
+    showToast("카드를 사용했습니다.", "success");
+  } catch (error) {
+    console.error(error);
+    closeSeatConfirmModal();
+    showToast("카드 사용 중 오류가 발생했습니다.", "error");
+  }
+}
+
+function validateSeatAssignments(game, requireComplete = false) {
+  const activeSeats = new Set(getSeatActiveNumbers(game.settings));
+  const participants = new Set(game.selectionOrder);
+  const owners = new Set();
+  const entries = Object.entries(game.assignments || {});
+  for (const [seatKey, ownerId] of entries) {
+    const seatNumber = getSeatNumberFromKey(seatKey);
+    if (!activeSeats.has(seatNumber) || !participants.has(ownerId) || owners.has(ownerId)) {
+      return false;
+    }
+    owners.add(ownerId);
+  }
+  if (requireComplete) {
+    return entries.length === participants.size && entries.length === activeSeats.size;
+  }
+  return entries.length <= participants.size;
+}
+
+async function endSeatCardPhase({ silent = false } = {}) {
+  let failureReason = "카드 활용 턴을 종료하지 못했습니다.";
+  try {
+    const result = await runTransaction(roomRef(state.roomCode), (room) => {
+      if (!room || room.mode !== "seat" || room.status !== "cardPhase") {
+        failureReason = "이미 카드 활용 턴이 종료되었습니다.";
+        return;
+      }
+      const game = normalizeSeatGameRecord(room.seatGame || {});
+      if (!validateSeatAssignments(game) || Object.keys(game.assignments).length !== game.currentSelectionIndex + 1) {
+        failureReason = "자리 배정 수를 확인할 수 없어 다음 단계로 이동하지 않았습니다.";
+        return;
+      }
+      const isLast = game.currentSelectionIndex >= game.selectionOrder.length - 1;
+      game.cardPhaseStartedAt = 0;
+      game.cardPhaseEndsAt = 0;
+      if (isLast) {
+        if (!validateSeatAssignments(game, true)) {
+          failureReason = "모든 학생의 자리가 정확히 하나씩 배정되지 않았습니다.";
+          return;
+        }
+        room.status = "finalReady";
+      } else {
+        game.currentSelectionIndex += 1;
+        room.status = "seatSelection";
+      }
+      room.seatGame = game;
+      return room;
+    });
+    if (!silent && !result.committed && (state.room?.status || "") === "cardPhase") {
+      showToast(failureReason, "error");
+    }
+  } catch (error) {
+    console.error(error);
+    if (!silent) {
+      showToast("카드 활용 턴 종료 중 오류가 발생했습니다.", "error");
+    }
+  }
+}
+
+async function revealSeatFinal() {
+  const now = Date.now();
+  let failureReason = "최종 자리를 공개할 수 없습니다.";
+  try {
+    const result = await runTransaction(roomRef(state.roomCode), (room) => {
+      if (!room || room.mode !== "seat" || room.status !== "finalReady") {
+        failureReason = "모든 자리와 마지막 카드 활용 턴이 먼저 끝나야 합니다.";
+        return;
+      }
+      const game = normalizeSeatGameRecord(room.seatGame || {});
+      if (!validateSeatAssignments(game, true)) {
+        failureReason = "최종 자리 배정이 완전하지 않아 공개하지 않았습니다.";
+        return;
+      }
+      game.finalRevealStartedAt = now;
+      game.finalRevealOrder = getSeatActiveNumbers(game.settings);
+      room.status = "finalReveal";
+      room.seatGame = game;
+      return room;
+    });
+    if (!result.committed) {
+      showToast(failureReason, "error");
+    }
+  } catch (error) {
+    console.error(error);
+    showToast("최종 자리 공개를 시작하지 못했습니다.", "error");
+  }
+}
+
+async function finishSeatFinalReveal() {
+  try {
+    await runTransaction(roomRef(state.roomCode), (room) => {
+      if (!room || room.mode !== "seat" || room.status !== "finalReveal") {
+        return;
+      }
+      room.status = "finished";
+      room.finishedAt = Date.now();
+      return room;
+    });
+  } catch (error) {
+    console.error(error);
+  }
+}
+
+function setupSeatCardPhaseTimer({ textSelector, fillSelector = "", onEnd = null }) {
+  clearTimer();
+  const game = getSeatGameState();
+  const textEl = document.querySelector(textSelector);
+  const fillEl = fillSelector ? document.querySelector(fillSelector) : null;
+  if (!textEl || !game.cardPhaseEndsAt) {
+    return;
+  }
+  const totalMs = Math.max(1, game.settings.cardPhaseSeconds) * 1000;
+  let didEnd = false;
+  const tick = () => {
+    const remaining = Math.max(0, game.cardPhaseEndsAt - Date.now());
+    textEl.textContent = `${Math.ceil(remaining / 1000)}초`;
+    if (fillEl) {
+      fillEl.style.width = `${Math.max(0, Math.min(100, remaining / totalMs * 100))}%`;
+    }
+    if (remaining <= 0 && !didEnd) {
+      didEnd = true;
+      clearTimer();
+      if (typeof onEnd === "function") {
+        onEnd();
+      }
+    }
+  };
+  tick();
+  state.timerId = window.setInterval(tick, 250);
+}
+
+function setupSeatFinalRevealAnimation() {
+  clearTimer();
+  const game = getSeatGameState();
+  const countdownEl = document.querySelector("#seatRevealCountdown");
+  const tiles = Array.from(document.querySelectorAll("[data-seat-reveal-index]"));
+  const countdownMs = SEAT_FINAL_COUNTDOWN_SECONDS * 1000;
+  const totalRevealMs = game.finalRevealOrder.length * SEAT_REVEAL_INTERVAL_MS;
+  let didFinish = false;
+  const tick = () => {
+    const elapsed = Math.max(0, Date.now() - game.finalRevealStartedAt);
+    const countdownRemaining = Math.max(0, countdownMs - elapsed);
+    if (countdownEl) {
+      countdownEl.textContent = countdownRemaining > 0 ? String(Math.ceil(countdownRemaining / 1000)) : "공개!";
+    }
+    const revealElapsed = Math.max(0, elapsed - countdownMs);
+    const revealedCount = Math.floor(revealElapsed / SEAT_REVEAL_INTERVAL_MS) + (revealElapsed > 0 ? 1 : 0);
+    tiles.forEach((tile) => {
+      if (Number(tile.dataset.seatRevealIndex) < revealedCount) {
+        tile.classList.add("revealed");
+      }
+    });
+    if (elapsed >= countdownMs + totalRevealMs + 500 && !didFinish) {
+      didFinish = true;
+      clearTimer();
+      finishSeatFinalReveal();
+    }
+  };
+  tick();
+  state.timerId = window.setInterval(tick, 100);
+}
+
+function setupSeatNoticeDismissHandler() {
+  document.querySelector("#seatDismissNoticeBtn")?.addEventListener("click", () => {
+    const game = getSeatGameState();
+    const notice = game.notifications[state.studentId];
+    if (notice) {
+      localStorage.setItem(`seat_notice_${state.roomCode}_${game.gameId}_${state.studentId}`, notice.id);
+      renderSeatStudentRoute();
+    }
+  });
+}
+
+function showSeatConfirmModal({ title, detail, cancelLabel = "취소", confirmLabel, onConfirm }) {
+  closeSeatConfirmModal();
+  document.body.insertAdjacentHTML("beforeend", `
+    <div class="modal-backdrop" data-seat-confirm-modal>
+      <section class="modal-panel">
+        <h2>${escapeHtml(title)}</h2>
+        <p class="lead">${escapeHtml(detail)}</p>
+        <div class="button-row">
+          <button class="btn ghost" data-seat-modal-cancel type="button">${escapeHtml(cancelLabel)}</button>
+          <button class="btn success" data-seat-modal-confirm type="button">${escapeHtml(confirmLabel)}</button>
+        </div>
+      </section>
+    </div>
+  `);
+  const modal = document.querySelector("[data-seat-confirm-modal]");
+  modal?.addEventListener("click", (event) => {
+    if (event.target === modal) {
+      closeSeatConfirmModal();
+    }
+  });
+  document.querySelector("[data-seat-modal-cancel]")?.addEventListener("click", closeSeatConfirmModal);
+  document.querySelector("[data-seat-modal-confirm]")?.addEventListener("click", async (event) => {
+    event.currentTarget.disabled = true;
+    await onConfirm();
+  });
+}
+
+function closeSeatConfirmModal() {
+  document.querySelector("[data-seat-confirm-modal]")?.remove();
 }
 
 function renderFinalResult(viewName, showTeacherControls, force = false) {
@@ -4956,7 +5599,8 @@ async function enterTeacher() {
         answers: {},
         mafia: selectedMode === "mafia" ? getDefaultMafiaState() : null,
         liar: selectedMode === "liar" ? getInitialLiarStateForWrite() : null,
-        catchmind: selectedMode === "catchmind" ? getInitialCatchmindStateForWrite() : null
+        catchmind: selectedMode === "catchmind" ? getInitialCatchmindStateForWrite() : null,
+        seatGame: selectedMode === "seat" ? getInitialSeatGameStateForWrite() : null
       });
     } else {
       const room = snapshot.val();
@@ -4972,6 +5616,7 @@ async function enterTeacher() {
           mafia: selectedMode === "mafia" ? getDefaultMafiaState() : null,
           liar: selectedMode === "liar" ? getInitialLiarStateForWrite() : null,
           catchmind: selectedMode === "catchmind" ? getInitialCatchmindStateForWrite() : null,
+          seatGame: selectedMode === "seat" ? getInitialSeatGameStateForWrite() : null,
           answers: null,
           complimentAnswers: null,
           complimentBonuses: null
@@ -5499,7 +6144,13 @@ function handleTeacherAction(action) {
     "catchmind-next-round": nextCatchmindRound,
     "catchmind-toggle-answer": toggleCatchmindTeacherAnswer,
     "catchmind-restart-same": () => startCatchmindGame({ reuseSettings: true }),
-    "catchmind-configure": configureCatchmindGame
+    "catchmind-configure": configureCatchmindGame,
+    "seat-save-settings": saveSeatGameSettings,
+    "seat-start": () => startSeatGame(),
+    "seat-end-card": endSeatCardPhase,
+    "seat-final-reveal": revealSeatFinal,
+    "seat-restart-same": () => startSeatGame({ reuseSettings: true }),
+    "seat-configure": configureSeatGame
   };
   actions[action]?.();
 }
@@ -6327,6 +6978,9 @@ async function resetGame() {
     return;
   }
 
+  state.seatSettingsDraft = null;
+  state.seatInteractionKey = "";
+
   const updates = {
     status: "waiting",
     currentQuestionIndex: -1,
@@ -6342,6 +6996,7 @@ async function resetGame() {
     mafia: getDefaultMafiaState(),
     liar: getDefaultLiarState(),
     catchmind: getInitialCatchmindStateForWrite(),
+    seatGame: getInitialSeatGameStateForWrite(),
     answers: null
   };
 
@@ -6369,6 +7024,9 @@ async function clearRoomLists() {
     return;
   }
 
+  state.seatSettingsDraft = null;
+  state.seatInteractionKey = "";
+
   try {
     await update(roomRef(state.roomCode), {
       status: "waiting",
@@ -6387,6 +7045,7 @@ async function clearRoomLists() {
       mafia: getDefaultMafiaState(),
       liar: getDefaultLiarState(),
       catchmind: getInitialCatchmindStateForWrite(),
+      seatGame: getInitialSeatGameStateForWrite(),
       answers: null,
       complimentAnswers: null
     });
@@ -6509,6 +7168,8 @@ function subscribeToRoom(code) {
           renderMafiaFinalResult("teacher-mafia-final", true, true);
         } else if (getRoomMode() === "catchmind") {
           renderCatchmindFinalResult("teacher-catchmind-final", true, true);
+        } else if (getRoomMode() === "seat") {
+          renderSeatFinalResult("teacher-seat-final", true, true);
         } else {
           renderFinalResult("teacher-final", true, true);
         }
@@ -6544,7 +7205,7 @@ function getSelectedTeacherMode() {
 }
 
 async function switchRoomMode(nextMode) {
-  if (!["quiz", "compliment", "mafia", "liar", "catchmind"].includes(nextMode)) {
+  if (!["quiz", "compliment", "mafia", "liar", "catchmind", "seat"].includes(nextMode)) {
     return;
   }
 
@@ -6558,6 +7219,8 @@ async function switchRoomMode(nextMode) {
   }
 
   try {
+    state.seatSettingsDraft = null;
+    state.seatInteractionKey = "";
     await update(roomRef(state.roomCode), {
       mode: nextMode,
       currentQuestionIndex: -1,
@@ -6568,6 +7231,7 @@ async function switchRoomMode(nextMode) {
       mafia: nextMode === "mafia" ? getDefaultMafiaState() : null,
       liar: nextMode === "liar" ? getInitialLiarStateForWrite() : null,
       catchmind: nextMode === "catchmind" ? getInitialCatchmindStateForWrite() : null,
+      seatGame: nextMode === "seat" ? getInitialSeatGameStateForWrite() : null,
       answers: null,
       complimentAnswers: null,
       complimentBonuses: null
@@ -8003,7 +8667,8 @@ function modeLabel(mode) {
     compliment: "칭찬 스무고개",
     mafia: "교실 마피아 게임",
     liar: "라이어게임",
-    catchmind: "캐치마인드"
+    catchmind: "캐치마인드",
+    seat: "자리바꾸기 게임"
   };
   return labels[mode] || "퀴즈 배틀";
 }
@@ -8464,6 +9129,7 @@ function renderTeacherModeControls() {
         <button class="btn ${mode === "mafia" ? "primary" : "ghost"}" data-switch-mode="mafia" type="button" ${canSwitch ? "" : "disabled"}>교실 마피아</button>
         <button class="btn ${mode === "liar" ? "primary" : "ghost"}" data-switch-mode="liar" type="button" ${canSwitch ? "" : "disabled"}>라이어게임</button>
         <button class="btn ${mode === "catchmind" ? "primary" : "ghost"}" data-switch-mode="catchmind" type="button" ${canSwitch ? "" : "disabled"}>캐치마인드</button>
+        <button class="btn ${mode === "seat" ? "primary" : "ghost"}" data-switch-mode="seat" type="button" ${canSwitch ? "" : "disabled"}>자리바꾸기</button>
       </div>
       ${canSwitch ? "" : `<p class="muted small">게임 진행 중에는 모드를 바꿀 수 없습니다.</p>`}
     </section>
@@ -9134,6 +9800,10 @@ function statusLabel(status) {
   const labels = {
     waiting: "대기 중",
     ready: "라운드 준비",
+    seatSelection: "자리 선택",
+    cardPhase: "카드 활용",
+    finalReady: "최종 공개 준비",
+    finalReveal: "자리 공개",
     playing: "진행 중",
     result: "결과 공개",
     targetReveal: "칭찬 대상 공개",
@@ -9156,6 +9826,10 @@ function statusPillClass(status) {
   const classes = {
     waiting: "blue",
     ready: "blue",
+    seatSelection: "green",
+    cardPhase: "gold",
+    finalReady: "blue",
+    finalReveal: "gold",
     playing: "green",
     result: "gold",
     targetReveal: "gold",
