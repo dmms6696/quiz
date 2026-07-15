@@ -7,7 +7,7 @@
         ".read": true,
         ".write": true,
         "mode": {
-          ".validate": "newData.val() === 'quiz' || newData.val() === 'compliment' || newData.val() === 'mafia'"
+          ".validate": "newData.val() === 'quiz' || newData.val() === 'compliment' || newData.val() === 'mafia' || newData.val() === 'liar'"
         },
         "status": {
           ".validate": "newData.val() === 'waiting' || newData.val() === 'collecting' || newData.val() === 'playing' || newData.val() === 'result' || newData.val() === 'targetReveal' || newData.val() === 'authorGuess' || newData.val() === 'authorReveal' || newData.val() === 'roleAssigned' || newData.val() === 'roleReveal' || newData.val() === 'nightAction' || newData.val() === 'nightResult' || newData.val() === 'discussion' || newData.val() === 'voting' || newData.val() === 'voteResult' || newData.val() === 'roleRevealDead' || newData.val() === 'finished'"
@@ -85,6 +85,78 @@
                 ".validate": "$index.matches(/^[0-4]$/) && newData.isString() && newData.val().length > 0 && newData.val().length <= 120"
               }
             }
+          }
+        },
+        "liar": {
+          "settings": {
+            "wordA": {
+              ".validate": "newData.isString() && newData.val().length <= 30"
+            },
+            "wordB": {
+              ".validate": "newData.isString() && newData.val().length <= 30"
+            },
+            "liarCount": {
+              ".validate": "newData.isNumber() && newData.val() >= 1 && newData.val() <= 30"
+            }
+          },
+          "assignments": {
+            "$studentId": {
+              "name": {
+                ".validate": "newData.isString() && newData.val().length > 0 && newData.val().length <= 20"
+              },
+              "word": {
+                ".validate": "newData.isString() && newData.val().length > 0 && newData.val().length <= 30"
+              }
+            }
+          },
+          "confirmations": {
+            "$studentId": {
+              "name": {
+                ".validate": "newData.isString() && newData.val().length > 0 && newData.val().length <= 20"
+              },
+              "confirmedAt": {
+                ".validate": "newData.isNumber()"
+              }
+            }
+          },
+          "votes": {
+            "$studentId": {
+              "voterName": {
+                ".validate": "newData.isString() && newData.val().length > 0 && newData.val().length <= 20"
+              },
+              "targetStudentId": {
+                ".validate": "newData.isString() && newData.val().length > 0 && newData.val().length <= 80"
+              },
+              "targetName": {
+                ".validate": "newData.isString() && newData.val().length > 0 && newData.val().length <= 20"
+              },
+              "votedAt": {
+                ".validate": "newData.isNumber()"
+              }
+            }
+          },
+          "majorityWord": {
+            ".validate": "newData.isString() && newData.val().length <= 30"
+          },
+          "liarWord": {
+            ".validate": "newData.isString() && newData.val().length <= 30"
+          },
+          "liarStudentIds": {
+            "$index": {
+              ".validate": "newData.isString() && newData.val().length > 0 && newData.val().length <= 80"
+            }
+          },
+          "startedAt": {
+            ".validate": "newData.isNumber()"
+          },
+          "voteOpenedAt": {
+            ".validate": "newData.isNumber()"
+          },
+          "voteResultOpenedAt": {
+            ".validate": "newData.isNumber()"
+          },
+          "revealedAt": {
+            ".validate": "newData.isNumber()"
           }
         },
         "answers": {

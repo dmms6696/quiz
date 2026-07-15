@@ -1,4 +1,4 @@
-import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.5/firebase-app.js";
+﻿import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.5/firebase-app.js";
 import {
   getDatabase,
   ref,
@@ -60,6 +60,7 @@ const DEFAULT_DISCUSSION_SECONDS = 180;
 const VOTE_TIE_RULE = "revote_then_skip";
 const REVEAL_ROLE_ON_ELIMINATION = true;
 const MAFIA_SELF_SELECT_ALLOWED = false;
+const DEFAULT_LIAR_COUNT = 2;
 const GHOST_BINGO_REQUIRED_CONDITIONS = 8;
 const GHOST_BINGO_FREE_ID = "FREE";
 const GHOST_CHAT_MAX_LENGTH = 100;
@@ -211,7 +212,10 @@ const state = {
   ghostJoinWriteKey: "",
   ghostBingoDraft: null,
   selectedGhostBingoConditionId: "",
-  lastGhostChatAt: 0
+  lastGhostChatAt: 0,
+  liarWordVisible: false,
+  liarWordVisibleKey: "",
+  selectedLiarVoteTargetId: ""
 };
 
 const appEl = document.querySelector("#app");
@@ -351,6 +355,13 @@ function renderHome() {
                     <small>역할 확인, 밤 행동, 토론, 투표를 패드로 진행합니다.</small>
                   </span>
                 </label>
+                <label class="mode-tile">
+                  <input type="radio" name="teacherMode" value="liar" />
+                  <span>
+                    <strong>라이어게임</strong>
+                    <small>비슷한 제시어 속 숨어 있는 라이어를 찾아라!</small>
+                  </span>
+                </label>
               </div>
             </div>
             <div class="button-row">
@@ -383,6 +394,11 @@ function renderStudentRoute() {
 
   if (getRoomMode() === "mafia") {
     renderMafiaStudentRoute();
+    return;
+  }
+
+  if (getRoomMode() === "liar") {
+    renderLiarStudentRoute();
     return;
   }
 
@@ -1286,6 +1302,143 @@ function renderMafiaGhostPublicStatus() {
   `;
 }
 
+function renderLiarStudentRoute() {
+  const status = state.room.status || "waiting";
+
+  if (status === "waiting") {
+    renderLiarStudentWaiting(true);
+    return;
+  }
+
+  if (status === "playing") {
+    renderLiarStudentWord(true);
+    return;
+  }
+
+  if (status === "voting") {
+    renderLiarStudentVoting(true);
+    return;
+  }
+
+  if (status === "voteResult") {
+    renderLiarVoteResult("student-liar-vote-result", false, true);
+    return;
+  }
+
+  if (status === "result" || status === "finished") {
+    renderLiarRevealResult("student-liar-reveal", false, true);
+    return;
+  }
+
+  renderLiarStudentWaiting(true);
+}
+
+function renderLiarStudentWaiting(force = false) {
+  const students = getStudents();
+  setView("liar-student-waiting", `
+    <section class="screen liar-mode">
+      <div class="status-bar">
+        <button class="btn ghost" id="backHomeBtn" type="button">처음으로</button>
+        <span class="pill blue">라이어게임</span>
+        <span class="pill blue">방 코드 ${escapeHtml(state.roomCode)}</span>
+      </div>
+      <div class="panel liar-panel">
+        <h2>선생님이 라이어게임을 시작할 때까지 기다려 주세요.</h2>
+        <p class="lead">현재 입장한 학생은 ${students.length}명입니다.</p>
+        <div class="notice info">게임이 시작되면 내 제시어를 조용히 확인합니다. 자신이 라이어인지 아닌지는 표시되지 않습니다.</div>
+      </div>
+    </section>
+  `, () => {
+    document.querySelector("#backHomeBtn").addEventListener("click", renderHome);
+  }, force);
+}
+
+function renderLiarStudentWord(force = false) {
+  const assignment = getMyLiarAssignment();
+  if (!assignment) {
+    setView("liar-student-no-assignment", `
+      <section class="screen liar-mode">
+        <div class="panel liar-panel">
+          <h2>이번 라이어게임 참가자로 배정되지 않았습니다.</h2>
+          <p class="lead">선생님이 새 게임을 시작할 때까지 기다려 주세요.</p>
+        </div>
+      </section>
+    `, null, force);
+    return;
+  }
+
+  const confirmed = Boolean(getLiarConfirmation(state.studentId));
+  const wordVisibleKey = `${state.room?.liar?.startedAt || "waiting"}:${state.studentId}`;
+  const visible = Boolean(state.liarWordVisible && state.liarWordVisibleKey === wordVisibleKey);
+
+  setView(`liar-word-${confirmed}-${visible}`, `
+    <section class="screen liar-mode">
+      <div class="status-bar">
+        <span class="pill blue">라이어게임</span>
+        <span class="pill ${confirmed ? "green" : "gold"}">${confirmed ? "제시어 확인 완료" : "제시어 확인 대기"}</span>
+      </div>
+      <div class="panel liar-panel word-card">
+        <p class="eyebrow">다른 친구에게 화면을 보여 주지 마세요</p>
+        ${visible ? `
+          <h1>${escapeHtml(assignment.word)}</h1>
+          <p class="lead">이 단어만 기억하세요. 자신이 라이어인지 아닌지는 공개되지 않습니다.</p>
+          <button class="btn success" id="confirmLiarWordBtn" type="button">확인했어요</button>
+        ` : `
+          <h2>${confirmed ? "제시어 확인 완료" : "내 제시어 확인하기"}</h2>
+          <p class="lead">${confirmed ? "필요하면 다시 확인할 수 있습니다." : "버튼을 누르면 제시어가 크게 표시됩니다."}</p>
+          <button class="btn primary" id="showLiarWordBtn" type="button">${confirmed ? "제시어 다시 보기" : "내 제시어 확인하기"}</button>
+        `}
+      </div>
+      <div class="notice info">교실에서 설명과 대화가 끝나면 선생님이 투표를 시작합니다.</div>
+    </section>
+  `, () => {
+    document.querySelector("#showLiarWordBtn")?.addEventListener("click", () => {
+      if (confirmed && !window.confirm("주변 친구에게 화면이 보이지 않게 한 뒤 다시 확인할까요?")) {
+        return;
+      }
+      state.liarWordVisible = true;
+      state.liarWordVisibleKey = wordVisibleKey;
+      renderLiarStudentWord(true);
+    });
+    document.querySelector("#confirmLiarWordBtn")?.addEventListener("click", confirmLiarWord);
+  }, force);
+}
+
+function renderLiarStudentVoting(force = false) {
+  const assignment = getMyLiarAssignment();
+  if (!assignment) {
+    renderLiarStudentWaiting(true);
+    return;
+  }
+
+  const vote = getMyLiarVote();
+  const options = getLiarParticipants().filter((participant) => participant.id !== state.studentId);
+  const selectedId = state.selectedLiarVoteTargetId;
+
+  setView(`liar-voting-${Boolean(vote)}-${selectedId}`, `
+    <section class="screen liar-mode">
+      <div class="status-bar">
+        <span class="pill green">라이어 투표</span>
+        <span class="pill blue">내 제시어 ${escapeHtml(assignment.word)}</span>
+      </div>
+      <div class="panel liar-panel">
+        <h2>${vote ? "투표 완료" : "라이어라고 생각하는 친구를 선택하세요."}</h2>
+        <p class="lead">${vote ? `${escapeHtml(vote.targetName)} 학생에게 투표했습니다. 변경할 수 없습니다.` : "본인에게는 투표할 수 없습니다."}</p>
+        ${vote ? `<div class="notice success">선생님이 결과를 공개하면 자동으로 이동합니다.</div>` : renderLiarVoteChoices(options, selectedId)}
+        ${!vote ? `<button class="btn primary" id="submitLiarVoteBtn" type="button" ${selectedId ? "" : "disabled"}>투표하기</button>` : ""}
+      </div>
+    </section>
+  `, () => {
+    document.querySelectorAll("[data-liar-vote-target]").forEach((button) => {
+      button.addEventListener("click", () => {
+        state.selectedLiarVoteTargetId = button.dataset.liarVoteTarget;
+        renderLiarStudentVoting(true);
+      });
+    });
+    document.querySelector("#submitLiarVoteBtn")?.addEventListener("click", submitLiarVote);
+  }, force);
+}
+
 function renderStudentQuiz(force = false) {
   const questions = getQuestions();
   const currentIndex = Number(state.room.currentQuestionIndex || 0);
@@ -1434,11 +1587,22 @@ function renderDisplayRoute(force = false) {
     return;
   }
 
+  if (getRoomMode() === "liar") {
+    renderLiarDisplay(force);
+    return;
+  }
+
   renderQuizDisplay(force);
 }
 
 function renderDisplayShell(viewName, title, subtitle, bodyHtml, afterRender = null, force = false) {
-  const modeClass = getRoomMode() === "compliment" ? "compliment-mode" : getRoomMode() === "mafia" ? "mafia-mode" : "";
+  const modeClass = getRoomMode() === "compliment"
+    ? "compliment-mode"
+    : getRoomMode() === "mafia"
+      ? "mafia-mode"
+      : getRoomMode() === "liar"
+        ? "liar-mode"
+        : "";
   setView(viewName, `
     <section class="screen display-stage ${modeClass}">
       <div class="display-header">
@@ -1698,6 +1862,70 @@ function renderMafiaDisplay(force = false) {
   }, force);
 }
 
+function renderLiarDisplay(force = false) {
+  const status = state.room.status || "waiting";
+  const participants = getLiarParticipants();
+  const confirmations = getLiarConfirmations();
+  const votes = getLiarVotes();
+  const viewName = `display-liar-${status}`;
+  let bodyHtml = "";
+
+  if (status === "playing") {
+    bodyHtml = `
+      <section class="panel liar-panel result-panel">
+        <span class="pill blue">제시어 확인</span>
+        <h1>제시어 확인 시간입니다.</h1>
+        <p class="lead">각자 패드에서 자기 제시어만 조용히 확인합니다.</p>
+        <div class="stats">
+          <div class="stat"><span class="muted">확인 완료</span><span class="num">${Object.keys(confirmations).length}/${participants.length}</span></div>
+          <div class="stat"><span class="muted">참가 학생</span><span class="num">${participants.length}</span></div>
+        </div>
+      </section>
+    `;
+  } else if (status === "voting") {
+    bodyHtml = `
+      <section class="panel liar-panel result-panel">
+        <span class="pill green">라이어 투표</span>
+        <h1>투표 진행 중</h1>
+        <p class="lead">라이어라고 생각하는 친구를 각자 선택합니다.</p>
+        <div class="stats">
+          <div class="stat"><span class="muted">투표 완료</span><span class="num">${Object.keys(votes).length}/${participants.length}</span></div>
+          <div class="stat"><span class="muted">참가 학생</span><span class="num">${participants.length}</span></div>
+        </div>
+      </section>
+    `;
+  } else if (status === "voteResult") {
+    bodyHtml = `
+      <section class="panel">
+        <h2>투표 결과</h2>
+        ${renderLiarVoteResults()}
+      </section>
+    `;
+  } else if (status === "result") {
+    bodyHtml = `
+      <section class="panel liar-panel result-panel">
+        <h1>실제 라이어 공개</h1>
+      </section>
+      <section class="panel">
+        ${renderLiarAnswerReveal()}
+      </section>
+    `;
+  } else {
+    bodyHtml = `
+      <section class="panel liar-panel result-panel">
+        <span class="pill blue">준비 중</span>
+        <h1>라이어게임을 준비 중입니다.</h1>
+        <div class="stats">
+          <div class="stat"><span class="muted">입장 학생</span><span class="num">${getStudents().length}</span></div>
+          <div class="stat"><span class="muted">접속 학생</span><span class="num">${getStudents().filter((student) => student.connected).length}</span></div>
+        </div>
+      </section>
+    `;
+  }
+
+  renderDisplayShell(viewName, "라이어게임", "비슷한 제시어 속 숨어 있는 라이어를 찾아라!", bodyHtml, null, force);
+}
+
 function renderTeacherDashboard(force = true) {
   if (!state.room) {
     setView("teacher-loading", `<section class="screen"><div class="panel"><h2>방 정보를 불러오는 중입니다.</h2></div></section>`);
@@ -1711,6 +1939,11 @@ function renderTeacherDashboard(force = true) {
 
   if (getRoomMode() === "mafia") {
     renderMafiaTeacherDashboard(force);
+    return;
+  }
+
+  if (getRoomMode() === "liar") {
+    renderLiarTeacherDashboard(force);
     return;
   }
 
@@ -1775,7 +2008,7 @@ function renderTeacherDashboard(force = true) {
             <p class="muted small">이미 제출된 문제는 지우지 않고, 새로 추가할 수 있는 개수만 조정합니다.</p>
           </section>
 
-          <h2>진행 controls</h2>
+          <h2>진행 조작</h2>
           <div class="button-row">
             <button class="btn primary" data-action="start" type="button" ${questions.length ? "" : "disabled"}>게임 시작</button>
             <button class="btn dark" data-action="restart-current" type="button" ${currentQuestion ? "" : "disabled"}>현재 문제로 이동</button>
@@ -1908,7 +2141,7 @@ function renderComplimentTeacherDashboard(force = true) {
             <p class="muted small">같은 친구를 여러 번 선택하는 것은 계속 막습니다. 실제 추가 가능 수는 입장한 친구 수의 영향도 받습니다.</p>
           </section>
 
-          <h2>진행 controls</h2>
+          <h2>진행 조작</h2>
           <div class="button-row">
             <button class="btn primary" data-action="start-compliment" type="button" ${compliments.length ? "" : "disabled"}>게임 시작</button>
             <button class="btn success" data-action="compliment-next-clue" type="button" ${currentCompliment && status === "playing" && canShowNextComplimentClue(currentCompliment) ? "" : "disabled"}>다음 단서 공개</button>
@@ -2048,7 +2281,7 @@ function renderMafiaTeacherDashboard(force = true) {
             <p class="muted small">시민은 전체 학생에서 마피아, 경찰, 의사를 뺀 나머지로 자동 배정됩니다.</p>
           </section>
 
-          <h2>진행 controls</h2>
+          <h2>진행 조작</h2>
           <div class="button-row">
             <button class="btn primary" data-action="mafia-assign" type="button" ${students.length && status === "waiting" ? "" : "disabled"}>역할 배정</button>
             <button class="btn dark" data-action="mafia-role-reveal" type="button" ${players.length && (status === "roleAssigned" || status === "waiting") ? "" : "disabled"}>역할 확인 시작</button>
@@ -2124,6 +2357,140 @@ function renderMafiaTeacherDashboard(force = true) {
         fillSelector: "#teacherMafiaDiscussionFill"
       });
     }
+  }, force);
+}
+
+function renderLiarTeacherDashboard(force = true) {
+  const students = getStudents();
+  const participants = getLiarParticipants();
+  const status = state.room.status || "waiting";
+  const settings = getLiarSettings();
+  const confirmations = getLiarConfirmations();
+  const votes = getLiarVotes();
+  const maxLiarCount = Math.max(1, Math.max(1, students.length - 1));
+  const canStart = students.length >= 2;
+  const isRunning = ["playing", "voting", "voteResult", "result"].includes(status);
+
+  setView(`teacher-liar-dashboard-${status}`, `
+    <section class="screen liar-mode">
+      <div class="status-bar">
+        <div>
+          <p class="eyebrow">교사 화면</p>
+          <h1>라이어게임</h1>
+        </div>
+        <button class="btn ghost" id="backHomeBtn" type="button">처음으로</button>
+      </div>
+
+      <div class="panel liar-panel">
+        <div class="status-bar">
+          <div>
+            <p class="muted small">학생들에게 알려 줄 방 코드</p>
+            <div class="room-code">${escapeHtml(state.roomCode)}</div>
+          </div>
+          <div class="button-row">
+            <span class="pill ${statusPillClass(status)}">${statusLabel(status)}</span>
+            <button class="btn ghost" id="copyRoomCodeBtn" type="button">방 코드 복사</button>
+            <button class="btn dark" data-action="open-display" type="button">교실 화면 팝업</button>
+          </div>
+        </div>
+        <div class="stats">
+          <div class="stat">
+            <span class="muted">참가 학생</span>
+            <span class="num">${isRunning ? participants.length : students.length}</span>
+          </div>
+          <div class="stat">
+            <span class="muted">제시어 확인</span>
+            <span class="num">${Object.keys(confirmations).length}/${participants.length || students.length}</span>
+          </div>
+          <div class="stat">
+            <span class="muted">투표 완료</span>
+            <span class="num">${Object.keys(votes).length}/${participants.length || students.length}</span>
+          </div>
+        </div>
+      </div>
+
+      <div class="teacher-grid">
+        <aside class="panel">
+          ${renderTeacherModeControls()}
+          <section class="panel tight">
+            <h2>게임 설정</h2>
+            <div class="form-grid">
+              <div class="field">
+                <label for="liarWordAInput">제시어 1</label>
+                <input id="liarWordAInput" maxlength="30" value="${escapeAttr(settings.wordA)}" ${isRunning ? "disabled" : ""} placeholder="예: 수박" />
+              </div>
+              <div class="field">
+                <label for="liarWordBInput">제시어 2</label>
+                <input id="liarWordBInput" maxlength="30" value="${escapeAttr(settings.wordB)}" ${isRunning ? "disabled" : ""} placeholder="예: 참외" />
+              </div>
+            </div>
+            <div class="liar-stepper">
+              <button class="btn ghost" data-liar-count-step="-1" type="button" ${isRunning ? "disabled" : ""}>-</button>
+              <input id="liarCountInput" type="number" min="1" max="${maxLiarCount}" value="${clampInt(settings.liarCount, 1, maxLiarCount, DEFAULT_LIAR_COUNT)}" ${isRunning ? "disabled" : ""} />
+              <button class="btn ghost" data-liar-count-step="1" type="button" ${isRunning ? "disabled" : ""}>+</button>
+            </div>
+            <p class="muted small">권장: 참가 인원의 약 10~30%. 모든 학생이 라이어가 되는 설정은 막습니다.</p>
+            <div class="button-row">
+              <button class="btn primary" data-action="liar-save-settings" type="button" ${isRunning ? "disabled" : ""}>설정 저장</button>
+              <button class="btn success" data-action="liar-start" type="button" ${canStart && !isRunning ? "" : "disabled"}>게임 시작</button>
+            </div>
+          </section>
+
+          <h2>진행 조작</h2>
+          <div class="button-row">
+            <button class="btn primary" data-action="liar-start-voting" type="button" ${status === "playing" ? "" : "disabled"}>투표 시작</button>
+            <button class="btn warn" data-action="liar-reveal-vote" type="button" ${status === "voting" && Object.keys(votes).length >= participants.length && participants.length ? "" : "disabled"}>투표 결과 공개</button>
+            <button class="btn warn" data-action="liar-force-vote" type="button" ${status === "voting" ? "" : "disabled"}>투표 강제 종료</button>
+            <button class="btn dark" data-action="liar-reveal-answer" type="button" ${status === "voteResult" ? "" : "disabled"}>라이어 공개</button>
+            <button class="btn success" data-action="liar-restart-same" type="button" ${status === "result" ? "" : "disabled"}>같은 제시어로 다시 하기</button>
+            <button class="btn ghost" data-action="liar-configure" type="button" ${isRunning ? "" : "disabled"}>설정 변경하기</button>
+            <button class="btn danger" data-action="reset" type="button">게임 초기화</button>
+            <button class="btn danger" data-action="clear-room" type="button">학생/자료 목록 초기화</button>
+          </div>
+        </aside>
+
+        <div class="screen">
+          <section class="panel liar-panel">
+            <h2>현재 상태</h2>
+            ${renderLiarTeacherStatusPanel()}
+          </section>
+          <div class="grid-2">
+            <section class="panel">
+              <h3>제시어 확인 현황</h3>
+              ${renderLiarConfirmationList()}
+            </section>
+            <section class="panel">
+              <h3>투표 현황</h3>
+              ${renderLiarVoteProgressPanel()}
+            </section>
+          </div>
+          ${status === "voteResult" ? `
+            <section class="panel">
+              <h2>투표 결과</h2>
+              ${renderLiarVoteResults()}
+            </section>
+          ` : ""}
+          ${status === "result" ? `
+            <section class="panel liar-panel">
+              <h2>실제 라이어 공개</h2>
+              ${renderLiarAnswerReveal()}
+            </section>
+          ` : ""}
+        </div>
+      </div>
+    </section>
+  `, () => {
+    document.querySelector("#backHomeBtn").addEventListener("click", renderHome);
+    document.querySelector("#copyRoomCodeBtn").addEventListener("click", copyRoomCode);
+    document.querySelectorAll("[data-switch-mode]").forEach((button) => {
+      button.addEventListener("click", () => switchRoomMode(button.dataset.switchMode));
+    });
+    document.querySelectorAll("[data-action]").forEach((button) => {
+      button.addEventListener("click", () => handleTeacherAction(button.dataset.action));
+    });
+    document.querySelectorAll("[data-liar-count-step]").forEach((button) => {
+      button.addEventListener("click", () => stepLiarCount(Number(button.dataset.liarCountStep)));
+    });
   }, force);
 }
 
@@ -2260,7 +2627,8 @@ async function enterTeacher() {
         questions: {},
         compliments: {},
         answers: {},
-        mafia: getDefaultMafiaState()
+        mafia: getDefaultMafiaState(),
+        liar: getDefaultLiarState()
       });
     } else {
       const room = snapshot.val();
@@ -2274,6 +2642,7 @@ async function enterTeacher() {
           questionOrder: null,
           complimentOrder: null,
           mafia: getDefaultMafiaState(),
+          liar: getDefaultLiarState(),
           answers: null,
           complimentAnswers: null,
           complimentBonuses: null
@@ -2784,7 +3153,15 @@ function handleTeacherAction(action) {
     "mafia-reveal-vote": revealMafiaVoteResult,
     "mafia-reveal-role": revealMafiaEliminatedRole,
     "mafia-next-night": startNextMafiaNight,
-    "mafia-finish": finishMafiaGame
+    "mafia-finish": finishMafiaGame,
+    "liar-save-settings": saveLiarSettings,
+    "liar-start": () => startLiarGame(),
+    "liar-start-voting": startLiarVoting,
+    "liar-reveal-vote": revealLiarVoteResult,
+    "liar-force-vote": forceCloseLiarVoting,
+    "liar-reveal-answer": revealLiarAnswer,
+    "liar-restart-same": () => startLiarGame({ reuseSettings: true }),
+    "liar-configure": configureLiarGame
   };
   actions[action]?.();
 }
@@ -3001,6 +3378,229 @@ async function saveMafiaSettings() {
   } catch (error) {
     console.error(error);
     showToast("설정을 저장하지 못했습니다.", "error");
+  }
+}
+
+async function saveLiarSettings() {
+  const settings = readLiarSettingsFromForm();
+  if (!validateLiarSettings(settings)) {
+    return;
+  }
+
+  try {
+    await update(roomRef(state.roomCode), {
+      "liar/settings": settings
+    });
+    showToast("라이어게임 설정을 저장했습니다.", "success");
+  } catch (error) {
+    console.error(error);
+    showToast("라이어게임 설정을 저장하지 못했습니다.", "error");
+  }
+}
+
+async function startLiarGame({ reuseSettings = false } = {}) {
+  const students = getStudents();
+  const sourceSettings = reuseSettings ? getLiarSettings() : readLiarSettingsFromForm();
+  const settings = {
+    ...sourceSettings,
+    liarCount: students.length >= 2
+      ? clampInt(sourceSettings.liarCount, 1, students.length - 1, DEFAULT_LIAR_COUNT)
+      : Number(sourceSettings.liarCount || DEFAULT_LIAR_COUNT)
+  };
+
+  if (students.length < 2) {
+    showToast("라이어게임은 학생이 2명 이상 입장해야 시작할 수 있습니다.", "error");
+    return;
+  }
+
+  if (!validateLiarSettings(settings)) {
+    return;
+  }
+
+  const liarCount = settings.liarCount;
+  const shuffledStudents = shuffleArray(students);
+  const liarIds = new Set(shuffledStudents.slice(0, liarCount).map((student) => student.id));
+  const wordPair = Math.random() < 0.5
+    ? { majorityWord: settings.wordA, liarWord: settings.wordB }
+    : { majorityWord: settings.wordB, liarWord: settings.wordA };
+  const assignments = {};
+
+  students.forEach((student) => {
+    const isLiar = liarIds.has(student.id);
+    assignments[student.id] = {
+      name: student.name,
+      word: isLiar ? wordPair.liarWord : wordPair.majorityWord
+    };
+  });
+
+  openDisplayWindow();
+
+  try {
+    await update(roomRef(state.roomCode), {
+      status: "playing",
+      liar: {
+        settings: { ...settings, liarCount },
+        majorityWord: wordPair.majorityWord,
+        liarWord: wordPair.liarWord,
+        liarStudentIds: [...liarIds],
+        assignments,
+        confirmations: null,
+        votes: null,
+        startedAt: Date.now(),
+        voteOpenedAt: null,
+        voteResultOpenedAt: null,
+        revealedAt: null
+      }
+    });
+    showToast("라이어게임을 시작했습니다.", "success");
+  } catch (error) {
+    console.error(error);
+    showToast("라이어게임을 시작하지 못했습니다.", "error");
+  }
+}
+
+async function confirmLiarWord() {
+  const assignment = getMyLiarAssignment();
+  if (!assignment) {
+    return;
+  }
+
+  try {
+    await update(ref(db, `rooms/${state.roomCode}/liar/confirmations/${state.studentId}`), {
+      name: state.studentName || assignment.name,
+      confirmedAt: serverTimestamp()
+    });
+    state.liarWordVisible = false;
+    state.liarWordVisibleKey = "";
+    showToast("제시어 확인을 완료했습니다.", "success");
+    renderLiarStudentWord(true);
+  } catch (error) {
+    console.error(error);
+    showToast("확인 상태를 저장하지 못했습니다.", "error");
+  }
+}
+
+async function startLiarVoting() {
+  if (!getLiarParticipants().length) {
+    showToast("먼저 라이어게임을 시작해 주세요.", "error");
+    return;
+  }
+
+  try {
+    await update(roomRef(state.roomCode), {
+      status: "voting",
+      "liar/votes": null,
+      "liar/voteOpenedAt": Date.now(),
+      "liar/voteResultOpenedAt": null
+    });
+    showToast("라이어 투표를 시작했습니다.", "success");
+  } catch (error) {
+    console.error(error);
+    showToast("투표를 시작하지 못했습니다.", "error");
+  }
+}
+
+async function submitLiarVote() {
+  const targetId = state.selectedLiarVoteTargetId;
+  const target = getLiarParticipants().find((participant) => participant.id === targetId);
+
+  if ((state.room?.status || "waiting") !== "voting") {
+    showToast("지금은 투표 시간이 아닙니다.", "error");
+    return;
+  }
+
+  if (!target || target.id === state.studentId) {
+    showToast("투표할 친구를 선택해 주세요.", "error");
+    return;
+  }
+
+  if (!window.confirm(`${target.name} 학생에게 투표할까요?`)) {
+    return;
+  }
+
+  const votePath = ref(db, `rooms/${state.roomCode}/liar/votes/${state.studentId}`);
+  const voteData = {
+    voterName: state.studentName,
+    targetStudentId: target.id,
+    targetName: target.name,
+    votedAt: serverTimestamp()
+  };
+
+  try {
+    const result = await runTransaction(votePath, (current) => current || voteData);
+    if (result.committed) {
+      state.selectedLiarVoteTargetId = "";
+      showToast("투표를 완료했습니다.", "success");
+      renderLiarStudentVoting(true);
+    } else {
+      showToast("이미 투표했습니다.", "error");
+    }
+  } catch (error) {
+    console.error(error);
+    showToast("투표를 저장하지 못했습니다.", "error");
+  }
+}
+
+async function revealLiarVoteResult() {
+  try {
+    await update(roomRef(state.roomCode), {
+      status: "voteResult",
+      "liar/voteResultOpenedAt": Date.now()
+    });
+    showToast("투표 결과를 공개했습니다.", "success");
+  } catch (error) {
+    console.error(error);
+    showToast("투표 결과를 공개하지 못했습니다.", "error");
+  }
+}
+
+async function forceCloseLiarVoting() {
+  if (!window.confirm("아직 투표하지 않은 학생이 있을 수 있습니다. 투표를 강제 종료하고 결과를 공개할까요?")) {
+    return;
+  }
+  await revealLiarVoteResult();
+}
+
+async function revealLiarAnswer() {
+  if (!window.confirm("실제 라이어와 제시어를 공개할까요?")) {
+    return;
+  }
+
+  try {
+    await update(roomRef(state.roomCode), {
+      status: "result",
+      "liar/revealedAt": Date.now()
+    });
+    showToast("라이어를 공개했습니다.", "success");
+  } catch (error) {
+    console.error(error);
+    showToast("라이어를 공개하지 못했습니다.", "error");
+  }
+}
+
+async function configureLiarGame() {
+  if (!window.confirm("현재 배정과 투표를 지우고 설정 화면으로 돌아갈까요?")) {
+    return;
+  }
+
+  try {
+    await update(roomRef(state.roomCode), {
+      status: "waiting",
+      "liar/assignments": null,
+      "liar/confirmations": null,
+      "liar/votes": null,
+      "liar/majorityWord": null,
+      "liar/liarWord": null,
+      "liar/liarStudentIds": null,
+      "liar/startedAt": null,
+      "liar/voteOpenedAt": null,
+      "liar/voteResultOpenedAt": null,
+      "liar/revealedAt": null
+    });
+    showToast("라이어게임 설정 화면으로 돌아왔습니다.", "success");
+  } catch (error) {
+    console.error(error);
+    showToast("설정 화면으로 돌아가지 못했습니다.", "error");
   }
 }
 
@@ -3402,6 +4002,7 @@ async function resetGame() {
     complimentBonuses: null,
     complimentAnswers: null,
     mafia: getDefaultMafiaState(),
+    liar: getDefaultLiarState(),
     answers: null
   };
 
@@ -3445,6 +4046,7 @@ async function clearRoomLists() {
       questions: null,
       compliments: null,
       mafia: getDefaultMafiaState(),
+      liar: getDefaultLiarState(),
       answers: null,
       complimentAnswers: null
     });
@@ -3600,7 +4202,7 @@ function getSelectedTeacherMode() {
 }
 
 async function switchRoomMode(nextMode) {
-  if (!["quiz", "compliment", "mafia"].includes(nextMode)) {
+  if (!["quiz", "compliment", "mafia", "liar"].includes(nextMode)) {
     return;
   }
 
@@ -3622,6 +4224,7 @@ async function switchRoomMode(nextMode) {
       questionOrder: null,
       complimentOrder: null,
       mafia: getDefaultMafiaState(),
+      liar: getDefaultLiarState(),
       answers: null,
       complimentAnswers: null,
       complimentBonuses: null
@@ -3998,6 +4601,84 @@ function getMafiaSettings() {
   };
 }
 
+function getDefaultLiarState() {
+  return {
+    settings: getDefaultLiarSettings(),
+    assignments: {},
+    confirmations: {},
+    votes: {},
+    majorityWord: "",
+    liarWord: "",
+    liarStudentIds: [],
+    startedAt: null,
+    voteOpenedAt: null,
+    voteResultOpenedAt: null,
+    revealedAt: null
+  };
+}
+
+function getDefaultLiarSettings() {
+  return {
+    wordA: "",
+    wordB: "",
+    liarCount: DEFAULT_LIAR_COUNT
+  };
+}
+
+function getLiarState() {
+  return {
+    ...getDefaultLiarState(),
+    ...(state.room?.liar || {}),
+    settings: getLiarSettings()
+  };
+}
+
+function getLiarSettings() {
+  return {
+    ...getDefaultLiarSettings(),
+    ...(state.room?.liar?.settings || {})
+  };
+}
+
+function readLiarSettingsFromForm() {
+  const students = getStudents();
+  const maxLiarCount = Math.max(1, students.length - 1);
+  const current = getLiarSettings();
+  return {
+    wordA: cleanText(document.querySelector("#liarWordAInput")?.value || current.wordA),
+    wordB: cleanText(document.querySelector("#liarWordBInput")?.value || current.wordB),
+    liarCount: clampInt(document.querySelector("#liarCountInput")?.value, 1, maxLiarCount, current.liarCount)
+  };
+}
+
+function validateLiarSettings(settings) {
+  if (!settings.wordA || !settings.wordB) {
+    showToast("제시어 1과 제시어 2를 모두 입력해 주세요.", "error");
+    return false;
+  }
+
+  if (settings.wordA === settings.wordB) {
+    showToast("두 제시어는 서로 달라야 합니다.", "error");
+    return false;
+  }
+
+  if (getStudents().length >= 2 && settings.liarCount >= getStudents().length) {
+    showToast("모든 학생이 라이어가 될 수는 없습니다. 라이어 수를 줄여 주세요.", "error");
+    return false;
+  }
+
+  return true;
+}
+
+function stepLiarCount(delta) {
+  const input = document.querySelector("#liarCountInput");
+  if (!input) {
+    return;
+  }
+  const max = Number(input.max || Math.max(1, getStudents().length - 1));
+  input.value = clampInt(Number(input.value || DEFAULT_LIAR_COUNT) + delta, 1, max, DEFAULT_LIAR_COUNT);
+}
+
 function readMafiaSettingsFromForm() {
   const current = getMafiaSettings();
   return {
@@ -4029,6 +4710,84 @@ function getMafiaPlayers() {
 
 function getMafiaPlayer(studentId) {
   return getMafiaPlayers().find((player) => player.id === studentId) || null;
+}
+
+function getLiarParticipants() {
+  const assignments = state.room?.liar?.assignments || {};
+  const roomStudents = state.room?.students || {};
+
+  if (Object.keys(assignments).length) {
+    return Object.entries(assignments)
+      .map(([id, assignment]) => ({
+        id,
+        name: assignment.name || roomStudents[id]?.name || "이름 없음",
+        word: assignment.word || "",
+        connected: Boolean(roomStudents[id]?.connected)
+      }))
+      .sort((a, b) => String(a.name).localeCompare(String(b.name), "ko"));
+  }
+
+  return getStudents();
+}
+
+function getLiarStudentIds() {
+  const raw = state.room?.liar?.liarStudentIds || [];
+  return Array.isArray(raw) ? raw.map(String) : Object.values(raw).map(String);
+}
+
+function getMyLiarAssignment() {
+  return getLiarParticipants().find((participant) => participant.id === state.studentId) || null;
+}
+
+function getLiarConfirmations() {
+  return state.room?.liar?.confirmations || {};
+}
+
+function getLiarConfirmation(studentId) {
+  return getLiarConfirmations()[studentId] || null;
+}
+
+function getLiarVotes() {
+  return state.room?.liar?.votes || {};
+}
+
+function getMyLiarVote() {
+  return getLiarVotes()[state.studentId] || null;
+}
+
+function getLiarVoteResultRows() {
+  const participants = getLiarParticipants();
+  const counts = participants.reduce((result, participant) => {
+    result[participant.id] = 0;
+    return result;
+  }, {});
+
+  Object.values(getLiarVotes()).forEach((vote) => {
+    if (vote?.targetStudentId && Object.prototype.hasOwnProperty.call(counts, vote.targetStudentId)) {
+      counts[vote.targetStudentId] += 1;
+    }
+  });
+
+  let previousVotes = null;
+  let previousRank = 0;
+  return participants
+    .map((participant) => ({
+      id: participant.id,
+      name: participant.name,
+      votes: Number(counts[participant.id] || 0)
+    }))
+    .sort((a, b) => {
+      if (b.votes !== a.votes) {
+        return b.votes - a.votes;
+      }
+      return String(a.name).localeCompare(String(b.name), "ko");
+    })
+    .map((row, index) => {
+      const rank = row.votes === previousVotes ? previousRank : index + 1;
+      previousVotes = row.votes;
+      previousRank = rank;
+      return { ...row, rank };
+    });
 }
 
 function getMafiaRoundNumber() {
@@ -4815,7 +5574,8 @@ function modeLabel(mode) {
   const labels = {
     quiz: "자기소개 퀴즈 배틀",
     compliment: "칭찬 스무고개",
-    mafia: "교실 마피아 게임"
+    mafia: "교실 마피아 게임",
+    liar: "라이어게임"
   };
   return labels[mode] || "자기소개 퀴즈 배틀";
 }
@@ -5214,6 +5974,55 @@ function renderMafiaFinalResult(viewName, showTeacherControls, force = false) {
   }, force);
 }
 
+function renderLiarVoteResult(viewName, showTeacherControls, force = false) {
+  setView(viewName, `
+    <section class="screen liar-mode">
+      <div class="status-bar">
+        <span class="pill gold">투표 결과</span>
+        ${showTeacherControls ? `<button class="btn dark" data-action="liar-reveal-answer" type="button">라이어 공개</button>` : ""}
+      </div>
+      <section class="panel">
+        <h1>라이어 투표 결과</h1>
+        ${renderLiarVoteResults()}
+      </section>
+      <div class="notice info">선생님이 실제 라이어를 공개하면 자동으로 이동합니다.</div>
+    </section>
+  `, () => {
+    document.querySelector("[data-action='liar-reveal-answer']")?.addEventListener("click", revealLiarAnswer);
+  }, force);
+}
+
+function renderLiarRevealResult(viewName, showTeacherControls, force = false) {
+  setView(viewName, `
+    <section class="screen liar-mode">
+      <div class="status-bar">
+        <span class="pill red">라이어 공개</span>
+        ${showTeacherControls ? `
+          <div class="button-row">
+            <button class="btn success" data-action="liar-restart-same" type="button">같은 제시어로 다시 하기</button>
+            <button class="btn ghost" data-action="liar-configure" type="button">설정 변경하기</button>
+            <button class="btn danger" data-action="reset" type="button">게임 초기화</button>
+          </div>
+        ` : ""}
+      </div>
+      <section class="panel liar-panel result-panel">
+        <h1>이번 게임의 제시어</h1>
+      </section>
+      <section class="panel">
+        ${renderLiarAnswerReveal()}
+      </section>
+      <section class="panel">
+        <h2>투표 결과</h2>
+        ${renderLiarVoteResults()}
+      </section>
+    </section>
+  `, () => {
+    document.querySelector("[data-action='liar-restart-same']")?.addEventListener("click", () => startLiarGame({ reuseSettings: true }));
+    document.querySelector("[data-action='liar-configure']")?.addEventListener("click", configureLiarGame);
+    document.querySelector("[data-action='reset']")?.addEventListener("click", resetGame);
+  }, force);
+}
+
 function renderTeacherModeControls() {
   const mode = getRoomMode();
   const canSwitch = (state.room?.status || "waiting") === "waiting";
@@ -5225,6 +6034,7 @@ function renderTeacherModeControls() {
         <button class="btn ${mode === "quiz" ? "primary" : "ghost"}" data-switch-mode="quiz" type="button" ${canSwitch ? "" : "disabled"}>자기소개 퀴즈</button>
         <button class="btn ${mode === "compliment" ? "primary" : "ghost"}" data-switch-mode="compliment" type="button" ${canSwitch ? "" : "disabled"}>칭찬 스무고개</button>
         <button class="btn ${mode === "mafia" ? "primary" : "ghost"}" data-switch-mode="mafia" type="button" ${canSwitch ? "" : "disabled"}>교실 마피아</button>
+        <button class="btn ${mode === "liar" ? "primary" : "ghost"}" data-switch-mode="liar" type="button" ${canSwitch ? "" : "disabled"}>라이어게임</button>
       </div>
       ${canSwitch ? "" : `<p class="muted small">게임 진행 중에는 모드를 바꿀 수 없습니다.</p>`}
     </section>
@@ -5261,6 +6071,174 @@ function renderStudentChoiceButtons(students, dataName, disabled = false) {
           ${student.connected ? `<span class="pill green">접속 중</span>` : `<span class="pill">대상 가능</span>`}
         </button>
       `).join("")}
+    </div>
+  `;
+}
+
+function renderLiarTeacherStatusPanel() {
+  const status = state.room?.status || "waiting";
+  const participants = getLiarParticipants();
+  const confirmations = getLiarConfirmations();
+  const votes = getLiarVotes();
+
+  if (status === "waiting") {
+    return `<div class="notice info">제시어 2개와 라이어 수를 설정한 뒤 게임을 시작해 주세요.</div>`;
+  }
+
+  if (status === "playing") {
+    return `
+      <div class="notice ${Object.keys(confirmations).length >= participants.length ? "success" : "info"}">
+        제시어 확인 ${Object.keys(confirmations).length} / ${participants.length}
+        ${Object.keys(confirmations).length >= participants.length ? `<p class="small">모든 학생이 제시어를 확인했습니다. 교실 대화 후 투표를 시작하세요.</p>` : ""}
+      </div>
+    `;
+  }
+
+  if (status === "voting") {
+    return `
+      <div class="notice ${Object.keys(votes).length >= participants.length ? "success" : "warn"}">
+        투표 완료 ${Object.keys(votes).length} / ${participants.length}
+        ${Object.keys(votes).length >= participants.length ? `<p class="small">모든 학생이 투표를 완료했습니다.</p>` : `<p class="small">아직 투표하지 않은 학생이 있어도 강제 종료할 수 있습니다.</p>`}
+      </div>
+    `;
+  }
+
+  if (status === "voteResult") {
+    return `<div class="notice gold">투표 결과가 공개되었습니다. 실제 라이어는 아직 공개되지 않았습니다.</div>`;
+  }
+
+  if (status === "result") {
+    return `<div class="notice success">실제 라이어와 제시어가 공개되었습니다.</div>`;
+  }
+
+  return `<p class="muted">현재 단계: ${statusLabel(status)}</p>`;
+}
+
+function renderLiarConfirmationList() {
+  const participants = getLiarParticipants();
+  const confirmations = getLiarConfirmations();
+
+  if (!participants.length) {
+    return `<div class="empty">게임을 시작하면 확인 현황이 표시됩니다.</div>`;
+  }
+
+  return `
+    <ul class="list">
+      ${participants.map((participant) => {
+        const confirmed = Boolean(confirmations[participant.id]);
+        return `
+          <li class="list-row split">
+            <strong>${escapeHtml(participant.name)}</strong>
+            <span class="pill ${confirmed ? "green" : "gold"}">${confirmed ? "확인 완료" : "대기"}</span>
+          </li>
+        `;
+      }).join("")}
+    </ul>
+  `;
+}
+
+function renderLiarVoteProgressPanel() {
+  const participants = getLiarParticipants();
+  const votes = getLiarVotes();
+  const status = state.room?.status || "waiting";
+
+  if (!participants.length) {
+    return `<div class="empty">투표가 시작되면 현황이 표시됩니다.</div>`;
+  }
+
+  if (status === "voteResult" || status === "result") {
+    return renderLiarVoteResults();
+  }
+
+  return `
+    <ul class="list">
+      ${participants.map((participant) => {
+        const voted = Boolean(votes[participant.id]);
+        return `
+          <li class="list-row split">
+            <strong>${escapeHtml(participant.name)}</strong>
+            <span class="pill ${voted ? "green" : "gold"}">${voted ? "투표 완료" : "대기"}</span>
+          </li>
+        `;
+      }).join("")}
+    </ul>
+  `;
+}
+
+function renderLiarVoteChoices(options, selectedId) {
+  if (!options.length) {
+    return `<div class="empty">투표할 대상이 없습니다.</div>`;
+  }
+
+  return `
+    <div class="student-choice-grid">
+      ${options.map((participant) => `
+        <button class="student-choice-btn ${selectedId === participant.id ? "selected" : ""}" data-liar-vote-target="${escapeAttr(participant.id)}" type="button">
+          <strong>${escapeHtml(participant.name)}</strong>
+          <span class="pill ${selectedId === participant.id ? "green" : "blue"}">${selectedId === participant.id ? "선택됨" : "투표 대상"}</span>
+        </button>
+      `).join("")}
+    </div>
+  `;
+}
+
+function renderLiarVoteResults() {
+  const rows = getLiarVoteResultRows();
+  const maxVotes = Math.max(1, ...rows.map((row) => row.votes));
+
+  if (!rows.length) {
+    return `<div class="empty">아직 투표 결과가 없습니다.</div>`;
+  }
+
+  return `
+    <div class="answer-bars liar-vote-bars">
+      ${rows.map((row) => {
+        const width = Math.max(4, Math.round((row.votes / maxVotes) * 100));
+        return `
+          <div class="bar-row">
+            <strong>${row.rank}위 ${escapeHtml(row.name)}</strong>
+            <div class="bar-track">
+              <div class="bar-fill choice-${(row.rank - 1) % 4}" style="width:${width}%"></div>
+            </div>
+            <strong>${row.votes}표</strong>
+          </div>
+        `;
+      }).join("")}
+    </div>
+  `;
+}
+
+function renderLiarAnswerReveal() {
+  const liar = getLiarState();
+  const participants = getLiarParticipants();
+  const liarIds = new Set(getLiarStudentIds());
+  const liars = participants.filter((participant) => liarIds.has(participant.id));
+
+  return `
+    <div class="stack">
+      <div class="grid-2">
+        <section class="mini-section">
+          <p class="muted small">다수 그룹</p>
+          <h2>${escapeHtml(liar.majorityWord || "-")}</h2>
+        </section>
+        <section class="mini-section">
+          <p class="muted small">라이어 그룹</p>
+          <h2>${escapeHtml(liar.liarWord || "-")}</h2>
+        </section>
+      </div>
+      <section>
+        <h3>라이어</h3>
+        ${liars.length ? `
+          <div class="liar-reveal-grid">
+            ${liars.map((participant) => `
+              <article class="liar-reveal-card">
+                <strong>${escapeHtml(participant.name)}</strong>
+                <span>${escapeHtml(liar.liarWord || "")}</span>
+              </article>
+            `).join("")}
+          </div>
+        ` : `<div class="empty">라이어 명단이 없습니다.</div>`}
+      </section>
     </div>
   `;
 }

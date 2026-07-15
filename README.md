@@ -7,6 +7,7 @@
 1. 자기소개 퀴즈 배틀: 학생이 자기소개 4지선다 문제를 만들고 친구들이 풉니다.
 2. 칭찬 스무고개: 학생이 특정 친구에 대한 칭찬 단서를 만들고 친구들이 대상과 작성자를 추리합니다.
 3. 교실 마피아 게임: 역할 확인, 밤 행동, 낮 토론, 투표를 패드로 진행합니다.
+4. 라이어게임: 비슷한 제시어 속 숨어 있는 라이어를 대화와 투표로 추리합니다.
 
 ## 1. 파일 구조
 
@@ -39,6 +40,8 @@ const DEFAULT_DOCTOR_COUNT = 1;
 const DEFAULT_DISCUSSION_SECONDS = 180;
 const VOTE_TIE_RULE = "revote_then_skip";
 const REVEAL_ROLE_ON_ELIMINATION = true;
+const MAFIA_SELF_SELECT_ALLOWED = false;
+const DEFAULT_LIAR_COUNT = 2;
 const GHOST_BINGO_REQUIRED_CONDITIONS = 8;
 const GHOST_CHAT_MAX_LENGTH = 100;
 const GHOST_CHAT_COOLDOWN_MS = 1000;
@@ -64,7 +67,7 @@ const GHOST_CHAT_COOLDOWN_MS = 1000;
 ```text
 rooms
   roomCode
-    mode: quiz | compliment | mafia
+    mode: quiz | compliment | mafia | liar
     status: waiting | playing | result | targetReveal | authorGuess | authorReveal
             roleAssigned | roleReveal | nightAction | nightResult
             discussion | voting | voteResult | roleRevealDead | finished
@@ -149,6 +152,34 @@ rooms
           content
           messageType: user | system
           createdAt
+
+    liar
+      settings
+        wordA
+        wordB
+        liarCount
+      majorityWord
+      liarWord
+      liarStudentIds
+        0: studentId
+      assignments
+        studentId
+          name
+          word
+      confirmations
+        studentId
+          name
+          confirmedAt
+      votes
+        studentId
+          voterName
+          targetStudentId
+          targetName
+          votedAt
+      startedAt
+      voteOpenedAt
+      voteResultOpenedAt
+      revealedAt
 ```
 
 ## 5. 자기소개 퀴즈 배틀 사용 방법
@@ -260,18 +291,47 @@ rooms
 - 외로운 한 표들: 3명 이상이 정확히 1표씩 득표
 - 압도적 지목: 최다 득표자와 2위의 표 차이가 3표 이상
 
-## 8. 초기화 버튼 차이
+## 8. 라이어게임 사용 방법
+
+교사:
+
+1. 교사로 입장합니다.
+2. 게임 모드에서 라이어게임을 선택합니다.
+3. 방 코드를 학생들에게 알려 주고 학생들이 입장할 때까지 기다립니다.
+4. 제시어 1, 제시어 2, 라이어 수를 입력한 뒤 설정 저장을 누릅니다. 두 제시어는 서로 달라야 합니다.
+5. 교실 화면 팝업을 눌러 확장 모니터용 보기 전용 화면을 열 수 있습니다. 게임 시작 시에도 자동으로 열립니다.
+6. 게임 시작을 누릅니다. 앱이 다수 제시어와 라이어 제시어를 무작위로 정하고, 라이어 학생도 무작위로 배정합니다.
+7. 학생들이 제시어를 확인했는지 현황을 봅니다. 이 단계에서는 교사 화면에도 실제 라이어 명단을 바로 보여 주지 않습니다.
+8. 교실 대화가 끝나면 투표 시작을 누릅니다.
+9. 모든 학생이 투표하면 투표 결과 공개를 누릅니다. 필요하면 투표 강제 종료를 눌러 바로 결과를 공개할 수 있습니다.
+10. 투표 결과를 확인한 뒤 라이어 공개를 누르면 실제 다수 제시어, 라이어 제시어, 라이어 학생 명단이 공개됩니다.
+11. 같은 제시어로 다시 하기를 누르면 같은 단어로 라이어만 새로 무작위 배정합니다. 설정 변경하기를 누르면 제시어 설정 화면으로 돌아갑니다.
+
+학생:
+
+1. 방 코드와 이름으로 입장합니다.
+2. 게임이 시작되면 내 제시어 확인하기를 누르고 자기 단어만 조용히 확인합니다.
+3. 앱은 본인이 라이어인지 아닌지 알려 주지 않습니다.
+4. 교실에서 대화하며 서로의 제시어를 추리합니다.
+5. 선생님이 투표를 시작하면 본인을 제외한 친구 중 라이어라고 생각하는 사람에게 한 번만 투표합니다.
+6. 투표 결과가 공개되면 누가 의심받았는지 보고, 선생님이 라이어를 공개하면 실제 정답을 확인합니다.
+
+보안 참고: 현재 MVP는 정적 웹앱이기 때문에 라이어 정답을 화면에서는 숨기지만, Firebase 방 데이터를 읽을 수 있는 사람에게 데이터베이스 수준으로 완전히 숨기는 구조는 아닙니다. 실제 비밀 유지가 중요한 운영에서는 Firebase Authentication과 Cloud Functions 같은 서버 검증을 추가해야 합니다.
+
+## 9. 초기화 버튼 차이
 
 - 게임 초기화: 점수와 답변, 진행 상태, 마피아 유령 목록, 유령 빙고, 유령 채팅을 지웁니다. 학생 목록과 제출 자료는 유지됩니다.
-- 학생/자료 목록 초기화: 학생 목록, 문제 목록, 칭찬 카드, 마피아 진행 데이터, 유령 데이터, 답변, 점수, 진행 상태를 모두 지웁니다.
+- 학생/자료 목록 초기화: 학생 목록, 문제 목록, 칭찬 카드, 마피아 진행 데이터, 라이어게임 진행 데이터, 유령 데이터, 답변, 점수, 진행 상태를 모두 지웁니다.
 
-## 9. 보안 주의사항
+## 10. 보안 주의사항
 
 현재 MVP는 정적 웹앱이고 Realtime Database를 방 단위로 구독합니다. 그래서 생존자 화면에는 유령 채팅 UI를 렌더링하지 않지만, Firebase 규칙과 인증을 세밀하게 나누지 않는 한 개발자 도구 수준에서 데이터를 완전히 숨기는 구조는 아닙니다.
 
-실제 장기 운영용으로 강화하려면 Firebase Authentication으로 학생/교사 계정을 구분하고, 유령 채팅을 별도 경로로 분리한 뒤 사망자와 교사만 읽을 수 있는 보안 규칙 또는 Cloud Functions 검증을 추가하세요.
+라이어게임도 같은 한계가 있습니다. 실제 라이어 명단과 제시어는 공개 전까지 화면에서 숨기지만, 인증 없이 방 전체를 읽는 현재 MVP 구조에서는 데이터베이스 수준의 완전한 비밀 정보가 아닙니다.
 
-## 10. 로컬 테스트 방법
+실제 장기 운영용으로 강화하려면 Firebase Authentication으로 학생/교사 계정을 구분하고, 유령 채팅이나 라이어 정답 데이터를 별도 경로로 분리한 뒤 필요한 사용자만 읽을 수 있는 보안 규칙 또는 Cloud Functions 검증을 추가하세요.
+
+## 11. 로컬 테스트 방법
 
 미리보기 서버는 자동으로 실행하지 않았습니다. 파일을 받은 뒤 원하는 포트로 직접 정적 서버를 실행하세요.
 
@@ -281,7 +341,7 @@ python -m http.server 5500
 
 브라우저에서 `http://localhost:5500`으로 접속합니다.
 
-## 11. 배포 방법
+## 12. 배포 방법
 
 GitHub Pages:
 
@@ -297,7 +357,7 @@ Netlify:
 2. 파일이 들어 있는 폴더를 끌어다 놓습니다.
 3. 배포 주소를 학생들에게 공유합니다.
 
-## 12. 나중에 추가하면 좋은 기능
+## 13. 나중에 추가하면 좋은 기능
 
 - 교사용 QR 코드 자동 생성
 - Firebase Authentication 기반 교사 권한 분리
@@ -305,6 +365,8 @@ Netlify:
 - 칭찬 카드 익명성 수준 설정
 - 마피아 정체 비공개 모드
 - 마피아 재투표 세부 규칙
+- 라이어게임 단어 세트 저장
+- 라이어게임 교사용 서버 비밀 저장
 - 유령 채팅 메시지 삭제 또는 채팅 잠금
 - 교사용 마피아 진행 로그 다운로드
 - 부적절한 단어 자동 경고

@@ -669,6 +669,70 @@ select:focus {
   transform: translateY(-1px);
 }
 
+.student-choice-btn.selected {
+  border-color: var(--primary);
+  background: #eef4ff;
+  box-shadow: 0 12px 24px rgba(47, 109, 246, 0.16);
+}
+
+.liar-mode .liar-panel {
+  background:
+    linear-gradient(135deg, rgba(47, 109, 246, 0.1), transparent 38%),
+    #fbfcff;
+  border-color: #c9d8ff;
+}
+
+.liar-mode .eyebrow {
+  color: #184bbd;
+}
+
+.word-card {
+  min-height: 340px;
+  align-content: center;
+  justify-items: center;
+  text-align: center;
+}
+
+.word-card h1 {
+  max-width: 100%;
+  color: #172033;
+  font-size: clamp(3.5rem, 12vw, 8rem);
+}
+
+.liar-stepper {
+  display: grid;
+  grid-template-columns: 54px minmax(0, 1fr) 54px;
+  gap: 8px;
+  align-items: center;
+}
+
+.liar-stepper input {
+  height: 48px;
+  text-align: center;
+  font-weight: 900;
+}
+
+.liar-reveal-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+  gap: 10px;
+  margin-top: 10px;
+}
+
+.liar-reveal-card {
+  display: grid;
+  gap: 6px;
+  border: 2px solid #ffb020;
+  border-radius: 8px;
+  background: #fff8e8;
+  padding: 14px;
+  text-align: center;
+}
+
+.liar-reveal-card strong {
+  font-size: clamp(1.2rem, 2.5vw, 1.7rem);
+}
+
 .mafia-mode {
   --mafia-ink: #1d2333;
   --mafia-panel: #fbfcff;
