@@ -2664,7 +2664,15 @@ function renderCatchmindGuessWaiting(force = false) {
 
 function renderCatchmindDrawerCanvas(force = false) {
   const round = getCurrentCatchmindRound();
-  setView(`catchmind-drawer-canvas-${round.roundId}-${state.room.status}`, `
+  const viewName = `catchmind-drawer-canvas-${round.roundId}-${state.room.status}`;
+
+  // Firebase에 획을 저장할 때마다 방 구독이 갱신된다. 누르고 있는 동안
+  // 캔버스를 교체하면 이전 캔버스의 좌표가 사라져 선이 모서리로 튄다.
+  if (state.catchmindDrawing.active && state.activeView === viewName && document.querySelector("#catchmindCanvas")) {
+    return;
+  }
+
+  setView(viewName, `
     <section class="screen catchmind-mode">
       <div class="status-bar">
         <div>
@@ -3836,10 +3844,10 @@ function setupCatchmindCanvas({ interactive = false } = {}) {
   canvas.addEventListener("pointerdown", (event) => startCatchmindStroke(event, canvas));
   canvas.addEventListener("pointermove", (event) => moveCatchmindStroke(event, canvas));
   canvas.addEventListener("pointerup", (event) => finishCatchmindStroke(event, canvas));
-  canvas.addEventListener("pointercancel", (event) => finishCatchmindStroke(event, canvas));
+  canvas.addEventListener("pointercancel", (event) => finishCatchmindStroke(event, canvas, { includeEventPoint: false }));
   canvas.addEventListener("pointerleave", (event) => {
-    if (state.catchmindDrawing.active) {
-      finishCatchmindStroke(event, canvas);
+    if (state.catchmindDrawing.active && !canvas.hasPointerCapture?.(event.pointerId)) {
+      finishCatchmindStroke(event, canvas, { includeEventPoint: false });
     }
   });
 }
@@ -3894,6 +3902,9 @@ function startCatchmindStroke(event, canvas) {
   event.preventDefault();
   canvas.setPointerCapture?.(event.pointerId);
   const point = getCatchmindPointerPoint(event, canvas);
+  if (!point) {
+    return;
+  }
   const strokeId = `stroke_${Date.now()}_${Math.random().toString(16).slice(2, 8)}`;
   state.catchmindDrawing = {
     active: true,
@@ -3913,6 +3924,9 @@ function moveCatchmindStroke(event, canvas) {
   }
   event.preventDefault();
   const point = getCatchmindPointerPoint(event, canvas);
+  if (!point) {
+    return;
+  }
   const points = state.catchmindDrawing.points;
   const previous = points[points.length - 1];
   if (previous && Math.abs(previous.x - point.x) + Math.abs(previous.y - point.y) < 0.003) {
@@ -3926,20 +3940,23 @@ function moveCatchmindStroke(event, canvas) {
   }
 }
 
-function finishCatchmindStroke(event, canvas) {
+function finishCatchmindStroke(event, canvas, { includeEventPoint = true } = {}) {
   if (!state.catchmindDrawing.active) {
     return;
   }
   event.preventDefault();
-  const point = getCatchmindPointerPoint(event, canvas);
+  const point = includeEventPoint ? getCatchmindPointerPoint(event, canvas) : null;
   const points = state.catchmindDrawing.points;
   const previous = points[points.length - 1];
-  if (!previous || Math.abs(previous.x - point.x) + Math.abs(previous.y - point.y) >= 0.003) {
+  if (point && (!previous || Math.abs(previous.x - point.x) + Math.abs(previous.y - point.y) >= 0.003)) {
     points.push(point);
     drawCatchmindLocalSegment(canvas, previous || point, point);
   }
   flushCatchmindStroke();
   state.catchmindDrawing.active = false;
+  if (canvas.hasPointerCapture?.(event.pointerId)) {
+    canvas.releasePointerCapture?.(event.pointerId);
+  }
 }
 
 function drawCatchmindLocalSegment(canvas, from, to) {
@@ -3960,9 +3977,14 @@ function drawCatchmindLocalSegment(canvas, from, to) {
 
 function getCatchmindPointerPoint(event, canvas) {
   const rect = canvas.getBoundingClientRect();
+  const clientX = Number(event.clientX);
+  const clientY = Number(event.clientY);
+  if (!canvas.isConnected || rect.width < 1 || rect.height < 1 || !Number.isFinite(clientX) || !Number.isFinite(clientY)) {
+    return null;
+  }
   return {
-    x: Math.max(0, Math.min(1, (event.clientX - rect.left) / Math.max(1, rect.width))),
-    y: Math.max(0, Math.min(1, (event.clientY - rect.top) / Math.max(1, rect.height)))
+    x: Math.max(0, Math.min(1, (clientX - rect.left) / rect.width)),
+    y: Math.max(0, Math.min(1, (clientY - rect.top) / rect.height))
   };
 }
 
