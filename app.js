@@ -79,7 +79,7 @@ const MEMORY_IMAGE_MAX_SIDE = 640;
 const MEMORY_IMAGE_QUALITY = 0.72;
 const MEMORY_IMAGE_MAX_BYTES = 140 * 1024;
 const MEMORY_IMAGE_TOTAL_MAX_BYTES = 3 * 1024 * 1024;
-const MEMORY_COUNTDOWN_MS = 4000;
+const MEMORY_PREVIEW_MS = 4000;
 const MEMORY_MISMATCH_DELAY_MS = 850;
 const GHOST_BINGO_REQUIRED_CONDITIONS = 8;
 const GHOST_BINGO_FREE_ID = "FREE";
@@ -5792,10 +5792,8 @@ function renderMemoryStudentRoute() {
     const startsAt = Number(game.gameStartedAt || 0);
     if (startsAt && getMemoryTrustedNow() >= startsAt) {
       ensureMemoryPlayingStarted();
-      renderMemoryStudentGame();
-    } else {
-      renderMemoryStudentCountdown();
     }
+    renderMemoryStudentCountdown();
     return;
   }
   if (status === "memoryPlaying") {
@@ -5876,9 +5874,23 @@ async function preloadMemoryImagesForStudent() {
 }
 
 function renderMemoryStudentCountdown() {
-  const startsAt = Number(getMemoryBattle().gameStartedAt || getMemoryTrustedNow() + MEMORY_COUNTDOWN_MS);
+  const player = state.memoryPlayer;
+  if (!player) {
+    setView("student-memory-preview-loading", `<section class="screen memory-mode"><div class="panel"><h2>암기할 카드판을 불러오는 중입니다.</h2></div></section>`);
+    return;
+  }
+  const size = getMemoryBoardSize();
+  const startsAt = Number(getMemoryBattle().gameStartedAt || getMemoryTrustedNow() + MEMORY_PREVIEW_MS);
+  const initialSeconds = Math.max(1, Math.ceil((startsAt - getMemoryTrustedNow()) / 1000));
   setView(`student-memory-countdown-${getMemoryBattle().gameId}`, `
-    <section class="screen memory-mode memory-countdown-screen"><section class="panel memory-panel result-panel"><p class="eyebrow">준비하세요!</p><div class="memory-countdown-number" id="memoryCountdownNumber">3</div><h1>카드판이 곧 열립니다.</h1></section></section>
+    <section class="screen memory-mode memory-preview-screen">
+      <div class="status-bar">
+        <div><p class="eyebrow">카드 위치 공개</p><h1>지금 위치를 기억하세요!</h1></div>
+        <span class="pill gold" id="memoryCountdownNumber" data-memory-preview="true">${initialSeconds}초 동안 위치를 기억하세요</span>
+      </div>
+      ${renderMemoryBoard(player, size, { revealAll: true })}
+      <p class="muted memory-progress-note">시간이 끝나면 카드가 자동으로 뒤집히고 게임이 시작됩니다.</p>
+    </section>
   `, () => startMemoryCountdownTicker(startsAt));
 }
 
@@ -5887,14 +5899,15 @@ function startMemoryCountdownTicker(startsAt) {
   const tick = () => {
     const remaining = startsAt - getMemoryTrustedNow();
     const element = document.querySelector("#memoryCountdownNumber");
-    if (element) element.textContent = remaining <= 0 ? "START!" : String(Math.max(1, Math.ceil(remaining / 1000)));
+    if (element) {
+      const seconds = Math.max(1, Math.ceil(remaining / 1000));
+      element.textContent = element.dataset.memoryPreview === "true"
+        ? (remaining <= 0 ? "카드를 뒤집는 중..." : `${seconds}초 동안 위치를 기억하세요`)
+        : (remaining <= 0 ? "START!" : String(seconds));
+    }
     if (remaining <= 0) {
       clearTimer();
       ensureMemoryPlayingStarted();
-      if (state.role !== "display") {
-        state.activeView = "";
-        renderMemoryStudentRoute();
-      }
     }
   };
   tick();
@@ -5950,14 +5963,15 @@ function renderMemoryStudentGame() {
   });
 }
 
-function renderMemoryBoard(player, size) {
+function renderMemoryBoard(player, size, { revealAll = false } = {}) {
   const cards = normalizeFirebaseList(player.cards);
   const matched = player.matchedPairs || {};
   const imageMap = Object.fromEntries(getMemoryImages().map((image) => [image.id, image]));
   return `<div class="memory-board-wrap"><div class="memory-board memory-board-${size}" style="--memory-size:${size}">${cards.map((card, index) => {
     const isMatched = Boolean(matched[card.imageId]);
+    const isOpen = revealAll || isMatched;
     const image = imageMap[card.imageId];
-    return `<button class="memory-card ${isMatched ? "is-open is-matched" : ""}" type="button" data-memory-card="${index}" ${isMatched ? "disabled" : ""} aria-label="${isMatched ? "찾은 카드" : "뒤집힌 카드"}"><span class="memory-card-inner"><span class="memory-card-back">?</span><span class="memory-card-front">${image ? `<img src="${escapeAttr(image.url)}" alt="" draggable="false" />` : ""}<span class="memory-match-mark">✓</span></span></span></button>`;
+    return `<button class="memory-card ${isOpen ? "is-open" : ""} ${isMatched ? "is-matched" : ""}" type="button" data-memory-card="${index}" ${isMatched || revealAll ? "disabled" : ""} aria-label="${revealAll ? "위치를 기억할 카드" : isMatched ? "찾은 카드" : "뒤집힌 카드"}"><span class="memory-card-inner"><span class="memory-card-back">?</span><span class="memory-card-front">${image ? `<img src="${escapeAttr(image.url)}" alt="" draggable="false" />` : ""}<span class="memory-match-mark">✓</span></span></span></button>`;
   }).join("")}</div></div>`;
 }
 
@@ -6369,7 +6383,7 @@ function renderMemoryTeacherProgress(force = true) {
 }
 
 function memoryTeacherStatusTitle(status) {
-  return ({ memoryReady: "학생 이미지 준비 상태를 확인하세요.", memoryCountdown: "게임 시작 카운트다운 중입니다.", memoryPlaying: "학생들이 각자의 카드판을 풀고 있습니다.", memoryAwaitingResults: "최종 결과 공개를 준비했습니다." })[status] || "메모리 배틀";
+  return ({ memoryReady: "학생 이미지 준비 상태를 확인하세요.", memoryCountdown: "학생들이 카드 위치를 기억하고 있습니다.", memoryPlaying: "학생들이 각자의 카드판을 풀고 있습니다.", memoryAwaitingResults: "최종 결과 공개를 준비했습니다." })[status] || "메모리 배틀";
 }
 
 function renderMemoryTeacherActions(status, readyCount, totalCount) {
@@ -6396,14 +6410,14 @@ async function startMemoryGame() {
   if (!participants.length) return;
   if (readyCount < participants.length && !window.confirm(`아직 ${participants.length - readyCount}명의 이미지 준비가 완료되지 않았습니다. 그래도 시작할까요?`)) return;
   openDisplayWindow({ silent: true });
-  const startedAt = getMemoryTrustedNow() + MEMORY_COUNTDOWN_MS;
+  const startedAt = getMemoryTrustedNow() + MEMORY_PREVIEW_MS;
   try {
     await update(roomRef(state.roomCode), {
       status: "memoryCountdown",
       "memoryBattle/countdownStartedAt": serverTimestamp(),
       "memoryBattle/gameStartedAt": startedAt
     });
-    showToast("메모리 배틀 카운트다운을 시작했습니다.", "success");
+    showToast("4초 동안 카드 위치를 공개한 뒤 게임을 시작합니다.", "success");
   } catch (error) {
     console.error(error);
     showToast("게임을 시작하지 못했습니다.", "error");
@@ -6609,8 +6623,8 @@ function renderMemoryDisplay(force = false) {
   if (status === "finished") {
     body = `<div class="grid-2 memory-results-grid"><section class="panel"><p class="eyebrow">이번 게임 결과</p>${renderMemoryRanking(normalizeFirebaseList(game.finalResults))}</section><section class="panel"><p class="eyebrow">${getMemoryBoardSize()}×${getMemoryBoardSize()} 역대 TOP 10</p>${renderMemoryRanking(normalizeFirebaseList(game.hallOfFame))}</section></div>`;
   } else if (status === "memoryCountdown") {
-    body = `<section class="panel memory-panel result-panel"><p class="eyebrow">준비하세요!</p><div class="memory-countdown-number" id="memoryCountdownNumber">3</div><h1>START!</h1></section>`;
-    afterRender = () => startMemoryCountdownTicker(Number(game.gameStartedAt || getMemoryTrustedNow() + MEMORY_COUNTDOWN_MS));
+    body = `<section class="panel memory-panel result-panel"><p class="eyebrow">카드 위치 공개</p><div class="memory-countdown-number" id="memoryCountdownNumber">4</div><h1>각자 카드 위치를 기억하세요!</h1></section>`;
+    afterRender = () => startMemoryCountdownTicker(Number(game.gameStartedAt || getMemoryTrustedNow() + MEMORY_PREVIEW_MS));
   } else if (status === "memoryPlaying" || status === "memoryAwaitingResults") {
     body = `<section class="panel memory-panel result-panel"><span class="pill ${status === "memoryPlaying" ? "green" : "gold"}">${status === "memoryPlaying" ? "게임 진행 중" : "결과 공개 대기"}</span><h1>완료 ${completed} / ${participants.length}명</h1><p class="lead">각자의 카드판에서 모든 이미지 짝을 찾고 있습니다.</p></section>`;
   } else if (status === "memoryReady") {
@@ -11002,7 +11016,7 @@ function statusLabel(status) {
     finalReady: "최종 공개 준비",
     finalReveal: "자리 공개",
     memoryReady: "이미지 준비",
-    memoryCountdown: "시작 카운트다운",
+    memoryCountdown: "카드 위치 공개",
     memoryPlaying: "메모리 배틀 진행",
     memoryAwaitingResults: "결과 공개 준비",
     playing: "진행 중",

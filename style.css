@@ -1200,6 +1200,10 @@ button.seat-tile:disabled {
   align-content: center;
 }
 
+.memory-preview-screen .memory-board {
+  width: min(100%, 68dvh, 720px);
+}
+
 .memory-countdown-number {
   color: #184bbd;
   font-size: clamp(5rem, 24vw, 12rem);
