@@ -2686,7 +2686,7 @@ function renderCatchmindStudentRoute() {
   }
 
   if (status === "playing") {
-    renderCatchmindGuesser(true);
+    renderCatchmindGuesser(false);
     return;
   }
 
@@ -2805,8 +2805,15 @@ function renderCatchmindDrawerCanvas(force = false) {
 function renderCatchmindGuesser(force = false) {
   const round = getCurrentCatchmindRound();
   const answer = getMyCatchmindCorrectAnswer();
-  const viewName = `catchmind-guesser-${round.roundId}-${Boolean(answer)}-${getCatchmindStrokeRenderKey()}-${getCatchmindCorrectAnswers().length}`;
+  const viewName = `catchmind-guesser-${round.roundId}-${Boolean(answer)}`;
   const disabled = Boolean(answer);
+
+  // Firebase updates on every new stroke and answer. Keep the answer form mounted
+  // so a student's keyboard, focus, draft, and scroll position do not jump.
+  if (state.activeView === viewName && document.querySelector("#catchmindCanvas")) {
+    refreshCatchmindGuesserView(round, answer);
+    return;
+  }
 
   setView(viewName, `
     <section class="screen catchmind-mode">
@@ -2835,7 +2842,7 @@ function renderCatchmindGuesser(force = false) {
               <input id="catchmindAnswerInput" maxlength="40" autocomplete="off" placeholder="정답을 입력하세요" value="${escapeAttr(state.catchmindAnswerDraft)}" ${disabled ? "disabled" : ""} />
             </div>
             <button class="btn primary full" id="catchmindAnswerSubmitBtn" type="button" ${disabled ? "disabled" : ""}>정답 제출</button>
-            ${state.catchmindWrongMessage ? `<div class="notice danger">${escapeHtml(state.catchmindWrongMessage)}</div>` : ""}
+            <div id="catchmindAnswerFeedback" class="notice danger" aria-live="polite" ${state.catchmindWrongMessage ? "" : "hidden"}>${escapeHtml(state.catchmindWrongMessage)}</div>
           `}
         </aside>
       </div>
@@ -2851,6 +2858,27 @@ function renderCatchmindGuesser(force = false) {
       onEnd: null
     });
   }, force);
+}
+
+function refreshCatchmindGuesserView(round, answer) {
+  const canvas = document.querySelector("#catchmindCanvas");
+  const renderKey = getCatchmindStrokeRenderKey();
+  if (canvas && canvas.dataset.catchmindRenderKey !== renderKey) {
+    resizeCatchmindCanvas(canvas);
+    drawCatchmindCanvas(canvas);
+    canvas.dataset.catchmindRenderKey = renderKey;
+  }
+
+  const hintBox = document.querySelector("#catchmindHintBox");
+  if (hintBox) {
+    hintBox.innerHTML = renderCatchmindHint(round, Boolean(answer));
+  }
+
+  const feedback = document.querySelector("#catchmindAnswerFeedback");
+  if (feedback) {
+    feedback.textContent = state.catchmindWrongMessage;
+    feedback.hidden = !state.catchmindWrongMessage;
+  }
 }
 
 function renderCatchmindRoundResult(viewName, showTeacherControls, force = false) {
@@ -3448,7 +3476,9 @@ async function submitCatchmindAnswer() {
     } catch (error) {
       console.error(error);
     }
-    renderCatchmindGuesser(true);
+    refreshCatchmindGuesserView(round, null);
+    input?.focus({ preventScroll: true });
+    input?.select();
     return;
   }
 
@@ -3475,7 +3505,7 @@ async function submitCatchmindAnswer() {
       state.catchmindAnswerDraft = "";
       state.catchmindWrongMessage = "";
       showToast("정답입니다!", "success");
-      renderCatchmindGuesser(true);
+      renderCatchmindGuesser(false);
     }
   } catch (error) {
     console.error(error);
@@ -3917,6 +3947,11 @@ function setupCatchmindAnswerHandlers() {
   input.addEventListener("input", () => {
     state.catchmindAnswerDraft = input.value;
     state.catchmindWrongMessage = "";
+    const feedback = document.querySelector("#catchmindAnswerFeedback");
+    if (feedback) {
+      feedback.textContent = "";
+      feedback.hidden = true;
+    }
   });
   input.addEventListener("keydown", (event) => {
     if (event.key === "Enter") {
@@ -3934,6 +3969,7 @@ function setupCatchmindCanvas({ interactive = false } = {}) {
   }
   resizeCatchmindCanvas(canvas);
   drawCatchmindCanvas(canvas);
+  canvas.dataset.catchmindRenderKey = getCatchmindStrokeRenderKey();
 
   if (!interactive) {
     return;
