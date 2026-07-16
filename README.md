@@ -22,7 +22,6 @@ project-root/
 │  ├─ style.css
 │  ├─ app.js
 │  ├─ firebase-rules.json
-│  ├─ storage-rules.txt
 │  └─ README.md
 └─ tests/
    ├─ seat-game-smoke.cjs
@@ -56,8 +55,10 @@ const DEFAULT_SEAT_ROWS = 5;
 const DEFAULT_SEAT_COLUMNS = 3;
 const DEFAULT_SEAT_CARD_PHASE_SECONDS = 12;
 const DEFAULT_MEMORY_BOARD_SIZE = 4;
-const MEMORY_IMAGE_MAX_SIDE = 900;
-const MEMORY_IMAGE_QUALITY = 0.82;
+const MEMORY_IMAGE_MAX_SIDE = 640;
+const MEMORY_IMAGE_QUALITY = 0.72;
+const MEMORY_IMAGE_MAX_BYTES = 140 * 1024;
+const MEMORY_IMAGE_TOTAL_MAX_BYTES = 3 * 1024 * 1024;
 const GHOST_BINGO_REQUIRED_CONDITIONS = 8;
 const GHOST_CHAT_MAX_LENGTH = 100;
 const GHOST_CHAT_COOLDOWN_MS = 1000;
@@ -76,16 +77,7 @@ const GHOST_CHAT_COOLDOWN_MS = 1000;
 6. Realtime Database 화면의 URL이 `databaseURL`에 들어갔는지 확인합니다.
 7. Rules 탭에 `firebase-rules.json` 내용을 붙여 넣고 게시를 누릅니다.
 
-메모리 배틀은 이미지 저장을 위해 Firebase Storage도 사용합니다.
-
-1. Firebase Console 왼쪽 메뉴에서 Build > Storage를 누릅니다.
-2. `시작하기`를 누르고 Storage 위치를 선택해 버킷을 만듭니다.
-3. Storage 화면 위쪽의 `규칙` 탭을 누릅니다.
-4. `storage-rules.txt`의 내용을 전체 붙여 넣습니다.
-5. 반드시 `게시`를 누릅니다.
-6. `app.js`의 `firebaseConfig.storageBucket` 값이 Firebase SDK 설정값과 같은지 확인합니다.
-
-Realtime Database의 `firebase-rules.json`과 Storage의 `storage-rules.txt`는 서로 다른 규칙입니다. 두 파일을 각각 해당 화면에 게시해야 합니다.
+메모리 배틀도 별도의 유료 Storage 없이 기존 Realtime Database를 사용합니다. Firebase Console에서 Storage를 만들거나 Blaze 요금제로 변경할 필요가 없습니다. 메모리 배틀 추가 후에는 Realtime Database의 `규칙` 탭에 최신 `firebase-rules.json` 전체를 다시 붙여 넣고 `게시`하세요.
 
 주의: 이 MVP의 교사 비밀번호는 정적 코드 안에 있으므로 완전한 보안 장치가 아닙니다. 실제 공개 서비스로 쓰려면 Firebase Authentication, 교사용 계정, 서버 검증 또는 Cloud Functions를 추가하세요.
 
@@ -258,6 +250,41 @@ rooms
       lastPublicEvent
       finalRevealStartedAt
       finalRevealOrder
+
+    memoryBattle
+      settings
+        boardSize: 2 | 4 | 6
+      gameId
+      imageSetId
+      imageList
+      participants
+      players
+      gameStartedAt
+      finalResults
+      hallOfFame
+
+memoryImages
+  roomCode
+    imageSetId
+      imageId
+        dataUrl
+        bytes
+        contentType
+
+memoryPrivate
+  roomCode
+    gameId
+      studentId
+        cards
+        matchedPairs
+        attempts
+        completed
+        completionTimeMs
+
+memoryRecords
+  2x2 | 4x4 | 6x6
+    studentId
+      completionTimeMs
 ```
 
 ## 5. 퀴즈 배틀 사용 방법
@@ -453,13 +480,14 @@ rooms
 1. 메모리 배틀을 선택하고 학생들이 방에 접속한 뒤 2×2, 4×4, 6×6 중 보드 크기를 고릅니다.
 2. 필요한 이미지 수만큼 `이미지 추가`로 JPG, JPEG, PNG, WEBP 파일을 선택합니다. 필요한 수는 각각 2장, 8장, 18장입니다.
 3. 미리보기에서 이미지를 확인하고 정확한 수가 준비되면 `게임 생성`을 누릅니다.
-4. 이미지는 브라우저에서 긴 변 900px, 품질 0.82로 최적화됩니다. WebP를 우선 사용하고 지원하지 않는 브라우저에서는 JPEG로 저장한 뒤 Firebase Storage의 `memory-battle/방코드/게임ID/`에 올립니다.
-5. 학생별 준비 완료 수를 확인합니다. 준비가 덜 된 학생이 있어도 확인 후 강제로 시작할 수 있습니다.
-6. 게임 시작 시 공통 시작 시각을 기준으로 3초 카운트다운 뒤 카드판이 열립니다.
-7. 교사는 완료 학생의 시간과 시도 횟수를 볼 수 있지만 학생 화면에는 진행 중 순위가 나오지 않습니다.
-8. 전원 완료 또는 `게임 종료` 후 `최종 결과 공개`를 누르면 이번 게임 순위와 해당 보드 역대 TOP 10이 함께 공개됩니다.
-9. `같은 이미지로 다시 하기`는 이미지와 역대 기록을 유지하고 학생별 카드 위치만 다시 섞습니다.
-10. `새 이미지로 게임하기`는 현재 이미지 파일과 개인 카드판을 정리하지만 역대 기록은 유지합니다.
+4. 이미지는 브라우저에서 긴 변 640px, 품질 0.72로 최적화됩니다. WebP를 우선 사용하고 지원하지 않는 브라우저에서는 JPEG로 변환합니다.
+5. 압축된 이미지는 한 장당 최대 약 140KB, 한 게임 전체 최대 약 3MB로 제한한 뒤 Realtime Database의 `memoryImages/방코드/이미지세트ID/`에 임시 저장합니다.
+6. 학생별 준비 완료 수를 확인합니다. 준비가 덜 된 학생이 있어도 확인 후 강제로 시작할 수 있습니다.
+7. 게임 시작 시 공통 시작 시각을 기준으로 3초 카운트다운 뒤 카드판이 열립니다.
+8. 교사는 완료 학생의 시간과 시도 횟수를 볼 수 있지만 학생 화면에는 진행 중 순위가 나오지 않습니다.
+9. 전원 완료 또는 `게임 종료` 후 `최종 결과 공개`를 누르면 이번 게임 순위와 해당 보드 역대 TOP 10이 함께 공개됩니다.
+10. `같은 이미지로 다시 하기`는 이미지 세트와 역대 기록을 유지하고 학생별 카드 위치만 다시 섞습니다.
+11. `새 이미지로 게임하기`는 Realtime Database의 현재 임시 이미지 세트와 개인 카드판을 정리하지만 역대 기록은 유지합니다.
 
 학생:
 
@@ -491,7 +519,7 @@ rooms
 
 자리바꾸기 게임도 화면에서는 최종 공개 전 자리 주인을 숨기지만, 현재 공개형 방 규칙에서는 개발자 도구로 원본 배정 데이터를 조사하는 것까지 막을 수 없습니다.
 
-메모리 배틀 이미지는 방 코드와 게임 ID 경로의 Firebase Storage에 저장되며 현재 규칙은 인증 없는 수업용 접속을 위해 공개 읽기/쓰기를 허용합니다. 링크를 아는 사용자의 접근을 완전히 막는 보안 구조는 아닙니다.
+메모리 배틀 이미지는 방 코드와 이미지 세트 ID 경로의 Realtime Database에 임시 저장되며 현재 규칙은 인증 없는 수업용 접속을 위해 공개 읽기/쓰기를 허용합니다. 방 코드와 경로를 아는 사용자의 접근을 완전히 막는 보안 구조는 아닙니다.
 
 실제 장기 운영용으로 강화하려면 Firebase Authentication으로 학생/교사 계정을 구분하고, 유령 채팅이나 라이어 정답 데이터를 별도 경로로 분리한 뒤 필요한 사용자만 읽을 수 있는 보안 규칙 또는 Cloud Functions 검증을 추가하세요.
 

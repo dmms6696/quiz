@@ -11,13 +11,6 @@ import {
   runTransaction,
   serverTimestamp
 } from "https://www.gstatic.com/firebasejs/10.12.5/firebase-database.js";
-import {
-  getStorage,
-  ref as storageRef,
-  uploadBytes,
-  getDownloadURL,
-  deleteObject
-} from "https://www.gstatic.com/firebasejs/10.12.5/firebase-storage.js";
 
 // =========================
 // 수업용 기본 설정
@@ -82,8 +75,10 @@ const SEAT_FINAL_COUNTDOWN_SECONDS = 5;
 const SEAT_REVEAL_INTERVAL_MS = 260;
 const MEMORY_BOARD_SIZES = [2, 4, 6];
 const DEFAULT_MEMORY_BOARD_SIZE = 4;
-const MEMORY_IMAGE_MAX_SIDE = 900;
-const MEMORY_IMAGE_QUALITY = 0.82;
+const MEMORY_IMAGE_MAX_SIDE = 640;
+const MEMORY_IMAGE_QUALITY = 0.72;
+const MEMORY_IMAGE_MAX_BYTES = 140 * 1024;
+const MEMORY_IMAGE_TOTAL_MAX_BYTES = 3 * 1024 * 1024;
 const MEMORY_COUNTDOWN_MS = 4000;
 const MEMORY_MISMATCH_DELAY_MS = 850;
 const GHOST_BINGO_REQUIRED_CONDITIONS = 8;
@@ -220,7 +215,6 @@ const GHOST_BINGO_CONDITIONS = [
 
 let firebaseApp = null;
 let db = null;
-let storage = null;
 let displayWindow = null;
 
 const state = {
@@ -263,6 +257,9 @@ const state = {
   memoryPlayer: null,
   unsubscribeMemoryPlayer: null,
   memoryPlayerSubscriptionKey: "",
+  memoryImages: [],
+  unsubscribeMemoryImages: null,
+  memoryImageSubscriptionKey: "",
   memoryBoardBusy: false,
   memoryOpenCards: [],
   memoryStartWriteKey: "",
@@ -287,7 +284,6 @@ const toastEl = document.querySelector("#toast");
 if (isFirebaseConfigured()) {
   firebaseApp = initializeApp(firebaseConfig);
   db = getDatabase(firebaseApp);
-  storage = getStorage(firebaseApp);
   onValue(ref(db, ".info/serverTimeOffset"), (snapshot) => {
     state.serverTimeOffset = Number(snapshot.val() || 0);
   });
@@ -5536,6 +5532,7 @@ function getInitialMemoryBattleStateForWrite(boardSize = DEFAULT_MEMORY_BOARD_SI
   return {
     settings: { boardSize: normalizeMemoryBoardSize(boardSize) },
     gameId: "",
+    imageSetId: "",
     imageList: null,
     participants: null,
     players: null,
@@ -5575,11 +5572,18 @@ function normalizeFirebaseList(value) {
     : [];
 }
 
-function getMemoryImages(sourceGame = getMemoryBattle()) {
+function getMemoryImageDefinitions(sourceGame = getMemoryBattle()) {
   return normalizeFirebaseList(sourceGame?.imageList).map((image, index) => ({
     id: String(image.id || `image_${index + 1}`),
-    url: String(image.url || ""),
-    storagePath: String(image.storagePath || "")
+    url: String(image.url || "")
+  }));
+}
+
+function getMemoryImages(sourceGame = getMemoryBattle()) {
+  const payloadMap = Object.fromEntries(normalizeFirebaseList(state.memoryImages).map((image) => [String(image.id || ""), image]));
+  return getMemoryImageDefinitions(sourceGame).map((image) => ({
+    id: image.id,
+    url: String(payloadMap[image.id]?.dataUrl || payloadMap[image.id]?.url || image.url || "")
   })).filter((image) => image.url);
 }
 
@@ -5648,17 +5652,25 @@ function createMemoryDeck(imageList) {
 function clearMemorySubscriptions() {
   if (typeof state.unsubscribeMemoryPlayer === "function") state.unsubscribeMemoryPlayer();
   if (typeof state.unsubscribeMemoryRecords === "function") state.unsubscribeMemoryRecords();
+  if (typeof state.unsubscribeMemoryImages === "function") state.unsubscribeMemoryImages();
   state.unsubscribeMemoryPlayer = null;
   state.unsubscribeMemoryRecords = null;
+  state.unsubscribeMemoryImages = null;
   state.memoryPlayerSubscriptionKey = "";
+  state.memoryImageSubscriptionKey = "";
   state.memoryPlayer = null;
+  state.memoryImages = [];
 }
 
 function clearMemoryPlayerSubscription() {
   if (typeof state.unsubscribeMemoryPlayer === "function") state.unsubscribeMemoryPlayer();
+  if (typeof state.unsubscribeMemoryImages === "function") state.unsubscribeMemoryImages();
   state.unsubscribeMemoryPlayer = null;
+  state.unsubscribeMemoryImages = null;
   state.memoryPlayerSubscriptionKey = "";
+  state.memoryImageSubscriptionKey = "";
   state.memoryPlayer = null;
+  state.memoryImages = [];
   state.memoryOpenCards = [];
   state.memoryBoardBusy = false;
 }
@@ -5668,6 +5680,15 @@ function clearMemoryImageDraft() {
     if (image.previewUrl) URL.revokeObjectURL(image.previewUrl);
   });
   state.memoryImageDraft = [];
+}
+
+function getMemoryDraftTotalBytes() {
+  return state.memoryImageDraft.reduce((total, image) => total + Number(image.bytes || 0), 0);
+}
+
+function formatMemoryBytes(bytes) {
+  const kilobytes = Math.max(0, Number(bytes || 0)) / 1024;
+  return kilobytes < 1024 ? `${kilobytes.toFixed(0)}KB` : `${(kilobytes / 1024).toFixed(2)}MB`;
 }
 
 function ensureMemoryPlayerSubscription() {
@@ -5686,6 +5707,23 @@ function ensureMemoryPlayerSubscription() {
   });
 }
 
+function ensureMemoryImagesSubscription() {
+  const imageSetId = String(getMemoryBattle().imageSetId || "");
+  if (!db || state.role !== "student" || !imageSetId) return;
+  const key = `${state.roomCode}:${imageSetId}`;
+  if (state.memoryImageSubscriptionKey === key) return;
+  if (typeof state.unsubscribeMemoryImages === "function") state.unsubscribeMemoryImages();
+  state.memoryImageSubscriptionKey = key;
+  state.memoryImages = [];
+  state.unsubscribeMemoryImages = onValue(ref(db, `memoryImages/${state.roomCode}/${imageSetId}`), (snapshot) => {
+    state.memoryImages = normalizeFirebaseList(snapshot.val());
+    if (getRoomMode() === "memory" && state.role === "student") {
+      if (state.room?.status === "memoryReady") preloadMemoryImagesForStudent();
+      renderMemoryStudentRoute();
+    }
+  });
+}
+
 function ensureMemoryRecordsSubscription() {
   if (!db || state.role !== "teacher" || state.unsubscribeMemoryRecords) return;
   state.unsubscribeMemoryRecords = onValue(ref(db, "memoryRecords"), (snapshot) => {
@@ -5700,6 +5738,7 @@ function renderMemoryStudentRoute() {
   const status = state.room?.status || "waiting";
   const game = getMemoryBattle();
   if (!game.gameId || status === "waiting") {
+    if (state.unsubscribeMemoryPlayer || state.unsubscribeMemoryImages) clearMemoryPlayerSubscription();
     renderMemoryStudentWaiting();
     return;
   }
@@ -5707,6 +5746,7 @@ function renderMemoryStudentRoute() {
     renderMemoryLateJoinWaiting();
     return;
   }
+  ensureMemoryImagesSubscription();
   ensureMemoryPlayerSubscription();
   if (status === "memoryReady") {
     renderMemoryStudentReady();
@@ -5777,9 +5817,11 @@ async function preloadMemoryImagesForStudent() {
   const game = getMemoryBattle();
   const summary = getMemoryPlayerSummaries()[state.studentId];
   if (!game.gameId || summary?.ready || state.memoryReadyWriteKey === game.gameId) return;
+  const images = getMemoryImages();
+  if (images.length !== getMemoryRequiredImageCount()) return;
   state.memoryReadyWriteKey = game.gameId;
   try {
-    await Promise.all(getMemoryImages().map((image) => new Promise((resolve, reject) => {
+    await Promise.all(images.map((image) => new Promise((resolve, reject) => {
       const loader = new Image();
       loader.onload = resolve;
       loader.onerror = reject;
@@ -6041,8 +6083,9 @@ function renderMemoryTeacherSetup(force = true) {
           <div class="stats"><div class="stat"><span class="muted">필요 이미지</span><span class="num">${required}장</span></div><div class="stat"><span class="muted">생성 카드</span><span class="num">${size * size}장</span></div></div>
           <p class="eyebrow">2. 이미지 직접 업로드</p>
           <label class="btn dark memory-file-button">이미지 추가<input id="memoryImageInput" type="file" accept="image/jpeg,image/png,image/webp,.jpg,.jpeg,.png,.webp" multiple /></label>
-          <p class="muted small">JPG, JPEG, PNG, WEBP · 여러 장을 한 번에 선택할 수 있습니다.</p>
+          <p class="muted small">JPG, JPEG, PNG, WEBP · 여러 장을 한 번에 선택할 수 있습니다. 이미지는 무료 Realtime Database 사용에 맞게 자동 압축됩니다.</p>
           <div class="notice ${state.memoryImageDraft.length === required ? "success" : state.memoryImageDraft.length > required ? "danger" : "info"}"><strong>등록된 이미지 ${state.memoryImageDraft.length} / ${required}장</strong><br />현재 생성 가능 카드 ${state.memoryImageDraft.length * 2}장 · ${size}×${size}는 총 ${size * size}장이 필요합니다.<br />업로드한 이미지마다 동일한 카드가 2장씩 생성됩니다.</div>
+          <p class="muted small">압축 이미지 전체 용량: <strong>${formatMemoryBytes(getMemoryDraftTotalBytes())}</strong> / ${formatMemoryBytes(MEMORY_IMAGE_TOTAL_MAX_BYTES)}</p>
           <div class="button-row"><button class="btn success" data-action="memory-create" type="button" ${state.memoryImageDraft.length === required && connectedStudents.length && !state.memoryUploading ? "" : "disabled"}>${state.memoryUploading ? "업로드 중..." : "게임 생성"}</button><button class="btn ghost" data-action="memory-toggle-records" type="button">${state.memoryRecordsVisible ? "역대 랭킹 닫기" : "역대 랭킹 보기"}</button></div>
         </section>
         <section class="panel">
@@ -6122,16 +6165,32 @@ async function optimizeMemoryImage(file) {
   context.fillRect(0, 0, width, height);
   context.drawImage(bitmap, 0, 0, width, height);
   if (typeof bitmap.close === "function") bitmap.close();
-  let blob = await new Promise((resolve) => canvas.toBlob(resolve, "image/webp", MEMORY_IMAGE_QUALITY));
+  let blob = null;
   let contentType = "image/webp";
-  let extension = "webp";
-  if (!blob) {
-    blob = await new Promise((resolve) => canvas.toBlob(resolve, "image/jpeg", MEMORY_IMAGE_QUALITY));
+  for (const quality of [MEMORY_IMAGE_QUALITY, 0.58, 0.46]) {
+    blob = await new Promise((resolve) => canvas.toBlob(resolve, "image/webp", quality));
+    if (blob && blob.size <= MEMORY_IMAGE_MAX_BYTES) break;
+  }
+  if (!blob || blob.size > MEMORY_IMAGE_MAX_BYTES) {
     contentType = "image/jpeg";
-    extension = "jpg";
+    for (const quality of [MEMORY_IMAGE_QUALITY, 0.56, 0.44]) {
+      blob = await new Promise((resolve) => canvas.toBlob(resolve, "image/jpeg", quality));
+      if (blob && blob.size <= MEMORY_IMAGE_MAX_BYTES) break;
+    }
   }
   if (!blob) throw new Error("이미지 압축 실패");
-  return { blob, contentType, extension, previewUrl: URL.createObjectURL(blob), width, height, bytes: blob.size };
+  if (blob.size > MEMORY_IMAGE_MAX_BYTES) throw new Error("압축 후 이미지 용량 초과");
+  const dataUrl = await memoryBlobToDataUrl(blob);
+  return { blob, dataUrl, contentType, previewUrl: URL.createObjectURL(blob), width, height, bytes: blob.size };
+}
+
+function memoryBlobToDataUrl(blob) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result || ""));
+    reader.onerror = () => reject(new Error("이미지 변환 실패"));
+    reader.readAsDataURL(blob);
+  });
 }
 
 async function loadMemoryImageSource(file) {
@@ -6158,10 +6217,6 @@ function removeMemoryDraftImage(index) {
 }
 
 async function createMemoryGame() {
-  if (!storage) {
-    showToast("Firebase Storage 설정이 필요합니다. README의 메모리 배틀 설정을 확인해 주세요.", "error");
-    return;
-  }
   const size = normalizeMemoryBoardSize(state.memorySettingsDraft?.boardSize);
   const required = getMemoryRequiredImageCount(size);
   if (state.memoryImageDraft.length !== required) {
@@ -6173,20 +6228,23 @@ async function createMemoryGame() {
     showToast("접속 중인 학생이 한 명 이상 있어야 게임을 생성할 수 있습니다.", "error");
     return;
   }
+  if (getMemoryDraftTotalBytes() > MEMORY_IMAGE_TOTAL_MAX_BYTES) {
+    showToast(`압축 이미지 전체 용량이 ${formatMemoryBytes(MEMORY_IMAGE_TOTAL_MAX_BYTES)}를 넘습니다. 일부 이미지를 삭제하거나 더 단순한 이미지를 사용해 주세요.`, "error");
+    return;
+  }
   state.memoryUploading = true;
   renderMemoryTeacherSetup(true);
   const gameId = `memory_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
-  const uploaded = [];
+  const imageSetId = `images_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+  const imageList = state.memoryImageDraft.map((source, index) => ({ id: `image_${index + 1}` }));
+  const imagePayload = state.memoryImageDraft.map((source, index) => ({
+    id: `image_${index + 1}`,
+    dataUrl: source.dataUrl,
+    bytes: Number(source.bytes || 0),
+    contentType: source.contentType || "image/webp"
+  }));
   try {
-    for (let index = 0; index < state.memoryImageDraft.length; index += 1) {
-      const source = state.memoryImageDraft[index];
-      const imageId = `image_${index + 1}`;
-      const path = `memory-battle/${state.roomCode}/${gameId}/${imageId}.${source.extension || "webp"}`;
-      const target = storageRef(storage, path);
-      await uploadBytes(target, source.blob, { contentType: source.contentType || "image/webp", cacheControl: "public,max-age=3600" });
-      uploaded.push({ id: imageId, url: await getDownloadURL(target), storagePath: path });
-    }
-    await writeNewMemorySession({ gameId, boardSize: size, imageList: uploaded, participants });
+    await writeNewMemorySession({ gameId, imageSetId, boardSize: size, imageList, imagePayload, participants });
     clearMemoryImageDraft();
     state.memoryUploading = false;
     openDisplayWindow({ silent: true });
@@ -6194,13 +6252,13 @@ async function createMemoryGame() {
   } catch (error) {
     console.error(error);
     state.memoryUploading = false;
-    await cleanupMemoryStorageImages(uploaded);
-    showToast("이미지 업로드 또는 게임 생성에 실패했습니다. Storage 설정과 규칙을 확인해 주세요.", "error");
+    await remove(ref(db, `memoryImages/${state.roomCode}/${imageSetId}`)).catch(() => {});
+    showToast("이미지를 저장하지 못했습니다. Realtime Database 규칙과 인터넷 연결을 확인해 주세요.", "error");
     renderMemoryTeacherSetup(true);
   }
 }
 
-async function writeNewMemorySession({ gameId, boardSize, imageList, participants }) {
+async function writeNewMemorySession({ gameId, imageSetId, boardSize, imageList, imagePayload = null, participants }) {
   const participantMap = {};
   const playerMap = {};
   const updates = {};
@@ -6219,11 +6277,17 @@ async function writeNewMemorySession({ gameId, boardSize, imageList, participant
       createdAt: getMemoryTrustedNow()
     };
   });
+  if (imagePayload) {
+    imagePayload.forEach((image) => {
+      updates[`memoryImages/${state.roomCode}/${imageSetId}/${image.id}`] = image;
+    });
+  }
   updates[`rooms/${state.roomCode}/status`] = "memoryReady";
   updates[`rooms/${state.roomCode}/finishedAt`] = null;
   updates[`rooms/${state.roomCode}/memoryBattle`] = {
     settings: { boardSize },
     gameId,
+    imageSetId,
     imageList,
     participants: participantMap,
     players: playerMap,
@@ -6458,16 +6522,17 @@ async function clearSelectedMemoryRecords() {
 
 async function restartMemoryGameWithSameImages() {
   const game = getMemoryBattle();
-  const images = getMemoryImages();
+  const images = getMemoryImageDefinitions(game);
+  const imageSetId = String(game.imageSetId || "");
   const participants = getStudents().filter((student) => student.connected);
-  if (!images.length || !participants.length) {
+  if (!imageSetId || !images.length || !participants.length) {
     showToast("이미지와 접속 학생을 확인해 주세요.", "error");
     return;
   }
   const oldGameId = game.gameId;
   const gameId = `memory_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
   try {
-    await writeNewMemorySession({ gameId, boardSize: getMemoryBoardSize(), imageList: images, participants });
+    await writeNewMemorySession({ gameId, imageSetId, boardSize: getMemoryBoardSize(), imageList: images, participants });
     if (oldGameId) await remove(ref(db, `memoryPrivate/${state.roomCode}/${oldGameId}`));
     showToast("같은 이미지로 새 게임을 만들었습니다. 카드 위치는 다시 섞였습니다.", "success");
   } catch (error) {
@@ -6482,7 +6547,7 @@ async function configureMemoryGameWithNewImages() {
   try {
     await update(roomRef(state.roomCode), { status: "waiting", memoryBattle: getInitialMemoryBattleStateForWrite(getMemoryBoardSize()), finishedAt: null });
     if (oldGame.gameId) await remove(ref(db, `memoryPrivate/${state.roomCode}/${oldGame.gameId}`));
-    await cleanupMemoryStorageImages(getMemoryImages(oldGame));
+    await cleanupMemoryImageSet(oldGame.imageSetId);
     state.memorySettingsDraft = { boardSize: getMemoryBoardSize() };
     clearMemoryImageDraft();
     showToast("새 이미지 게임 설정으로 돌아왔습니다. 역대 기록은 유지됩니다.", "success");
@@ -6492,9 +6557,9 @@ async function configureMemoryGameWithNewImages() {
   }
 }
 
-async function cleanupMemoryStorageImages(images = getMemoryImages()) {
-  if (!storage) return;
-  await Promise.allSettled(images.filter((image) => image.storagePath).map((image) => deleteObject(storageRef(storage, image.storagePath))));
+async function cleanupMemoryImageSet(imageSetId = getMemoryBattle().imageSetId) {
+  if (!db || !imageSetId) return;
+  await remove(ref(db, `memoryImages/${state.roomCode}/${imageSetId}`));
 }
 
 function renderMemoryDisplay(force = false) {
@@ -8080,7 +8145,7 @@ async function resetGame() {
     if (oldMemoryGame.gameId) {
       await Promise.allSettled([
         remove(ref(db, `memoryPrivate/${state.roomCode}/${oldMemoryGame.gameId}`)),
-        cleanupMemoryStorageImages(getMemoryImages(oldMemoryGame))
+        cleanupMemoryImageSet(oldMemoryGame.imageSetId)
       ]);
     }
     showToast("게임이 초기화되었습니다.", "success");
@@ -8134,7 +8199,7 @@ async function clearRoomLists() {
     if (oldMemoryGame.gameId) {
       await Promise.allSettled([
         remove(ref(db, `memoryPrivate/${state.roomCode}/${oldMemoryGame.gameId}`)),
-        cleanupMemoryStorageImages(getMemoryImages(oldMemoryGame))
+        cleanupMemoryImageSet(oldMemoryGame.imageSetId)
       ]);
     }
     showToast("학생 목록과 제출 자료를 모두 초기화했습니다.", "success");
