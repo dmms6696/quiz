@@ -11,6 +11,8 @@
 5. 캐치마인드: 출제자가 그리는 그림을 실시간으로 보고 제시어를 맞힙니다.
 6. 자리바꾸기 게임: 비밀 순서로 자리를 고르고 카드 효과를 사용한 뒤 마지막에 자리 주인을 공개합니다.
 7. 메모리 배틀: 교사가 올린 이미지로 학생마다 독립된 카드판을 풀고 보드 크기별 최고 기록에 도전합니다.
+8. 개념 빙고: 학생이 배운 개념으로 빙고판을 만들고 설명이 승인되면 자유롭게 칸을 표시합니다.
+9. 초성 단어 챌린지: 제시된 초성에 맞는 단어를 선점해 제출하고 교사가 승인한 단어 수로 겨룹니다.
 
 ## 1. 파일 구조
 
@@ -25,7 +27,9 @@ project-root/
 │  └─ README.md
 └─ tests/
    ├─ seat-game-smoke.cjs
-   └─ memory-battle-smoke.cjs
+   ├─ memory-battle-smoke.cjs
+   ├─ quiz-bingo-smoke.cjs
+   └─ word-challenge-smoke.cjs
 ```
 
 ## 2. 주요 설정값
@@ -59,6 +63,9 @@ const MEMORY_IMAGE_MAX_SIDE = 640;
 const MEMORY_IMAGE_QUALITY = 0.72;
 const MEMORY_IMAGE_MAX_BYTES = 140 * 1024;
 const MEMORY_IMAGE_TOTAL_MAX_BYTES = 3 * 1024 * 1024;
+const DEFAULT_WORD_CHALLENGE_SECONDS = 60;
+const MIN_WORD_CHALLENGE_SECONDS = 10;
+const MAX_WORD_CHALLENGE_SECONDS = 600;
 const GHOST_BINGO_REQUIRED_CONDITIONS = 8;
 const GHOST_CHAT_MAX_LENGTH = 100;
 const GHOST_CHAT_COOLDOWN_MS = 1000;
@@ -86,12 +93,13 @@ const GHOST_CHAT_COOLDOWN_MS = 1000;
 ```text
 rooms
   roomCode
-    mode: quiz | compliment | mafia | liar | catchmind | seat | memory
+    mode: quiz | compliment | mafia | liar | catchmind | seat | memory | bingo | word
     status: waiting | ready | playing | result | targetReveal | authorGuess | authorReveal
             roleAssigned | roleReveal | nightAction | nightResult
             discussion | voting | voteResult | roleRevealDead
             seatSelection | cardPhase | finalReady | finalReveal
-            memoryReady | memoryCountdown | memoryPlaying | memoryAwaitingResults | finished
+            memoryReady | memoryCountdown | memoryPlaying | memoryAwaitingResults
+            bingoPlaying | reviewing | finished
     maxQuestionsPerStudent
     maxComplimentsPerStudent
     students
@@ -262,6 +270,25 @@ rooms
       gameStartedAt
       finalResults
       hallOfFame
+
+    wordChallenge
+      settings
+        chosung
+        duration
+      gameId
+      startedAt
+      endedAt
+      submissions
+        submissionId
+          participantId
+          nickname
+          originalWord
+          normalizedWord
+          status: pending | approved | rejected
+      claims
+        normalizedWord
+          submissionId
+          status: pending | approved
 
 memoryImages
   roomCode
@@ -538,6 +565,8 @@ python -m http.server 5500
 ```bash
 node tests/seat-game-smoke.cjs
 node tests/memory-battle-smoke.cjs
+node tests/quiz-bingo-smoke.cjs
+node tests/word-challenge-smoke.cjs
 ```
 
 ## 15. 배포 방법

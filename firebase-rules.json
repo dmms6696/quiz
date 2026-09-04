@@ -7,10 +7,13 @@
         ".read": true,
         ".write": true,
         "mode": {
-          ".validate": "newData.val() === 'quiz' || newData.val() === 'compliment' || newData.val() === 'mafia' || newData.val() === 'liar' || newData.val() === 'catchmind' || newData.val() === 'seat' || newData.val() === 'memory'"
+          ".validate": "newData.val() === 'quiz' || newData.val() === 'compliment' || newData.val() === 'mafia' || newData.val() === 'liar' || newData.val() === 'catchmind' || newData.val() === 'seat' || newData.val() === 'memory' || newData.val() === 'bingo' || newData.val() === 'word'"
+        },
+        "gameVariant": {
+          ".validate": "!newData.exists() || newData.val() === 'word'"
         },
         "status": {
-          ".validate": "newData.val() === 'waiting' || newData.val() === 'ready' || newData.val() === 'collecting' || newData.val() === 'playing' || newData.val() === 'result' || newData.val() === 'targetReveal' || newData.val() === 'authorGuess' || newData.val() === 'authorReveal' || newData.val() === 'roleAssigned' || newData.val() === 'roleReveal' || newData.val() === 'nightAction' || newData.val() === 'nightResult' || newData.val() === 'discussion' || newData.val() === 'voting' || newData.val() === 'voteResult' || newData.val() === 'roleRevealDead' || newData.val() === 'seatSelection' || newData.val() === 'cardPhase' || newData.val() === 'finalReady' || newData.val() === 'finalReveal' || newData.val() === 'memoryReady' || newData.val() === 'memoryCountdown' || newData.val() === 'memoryPlaying' || newData.val() === 'memoryAwaitingResults' || newData.val() === 'finished'"
+          ".validate": "newData.val() === 'waiting' || newData.val() === 'ready' || newData.val() === 'collecting' || newData.val() === 'playing' || newData.val() === 'reviewing' || newData.val() === 'result' || newData.val() === 'targetReveal' || newData.val() === 'authorGuess' || newData.val() === 'authorReveal' || newData.val() === 'roleAssigned' || newData.val() === 'roleReveal' || newData.val() === 'nightAction' || newData.val() === 'nightResult' || newData.val() === 'discussion' || newData.val() === 'voting' || newData.val() === 'voteResult' || newData.val() === 'roleRevealDead' || newData.val() === 'seatSelection' || newData.val() === 'cardPhase' || newData.val() === 'finalReady' || newData.val() === 'finalReveal' || newData.val() === 'memoryReady' || newData.val() === 'memoryCountdown' || newData.val() === 'memoryPlaying' || newData.val() === 'memoryAwaitingResults' || newData.val() === 'bingoPlaying' || newData.val() === 'finished'"
         },
         "currentQuestionIndex": {
           ".validate": "newData.isNumber() && newData.val() >= -1"
@@ -45,6 +48,9 @@
         },
         "questions": {
           "$questionId": {
+            "type": {
+              ".validate": "newData.val() === 'choice' || newData.val() === 'short'"
+            },
             "authorName": {
               ".validate": "newData.isString() && newData.val().length > 0 && newData.val().length <= 20"
             },
@@ -62,6 +68,9 @@
             },
             "correctIndex": {
               ".validate": "newData.isNumber() && newData.val() >= 0 && newData.val() <= 3"
+            },
+            "correctAnswer": {
+              ".validate": "newData.isString() && newData.val().length > 0 && newData.val().length <= 80"
             }
           }
         },
@@ -168,6 +177,12 @@
               "selectedIndex": {
                 ".validate": "newData.isNumber() && newData.val() >= 0 && newData.val() <= 3"
               },
+              "answerType": {
+                ".validate": "newData.val() === 'choice' || newData.val() === 'short'"
+              },
+              "textAnswer": {
+                ".validate": "newData.isString() && newData.val().length > 0 && newData.val().length <= 80"
+              },
               "isCorrect": {
                 ".validate": "newData.isBoolean()"
               },
@@ -179,6 +194,159 @@
               },
               "scoreEarned": {
                 ".validate": "newData.isNumber() && newData.val() >= 0 && newData.val() <= 1000"
+              }
+            }
+          }
+        }
+        ,
+        "bingo": {
+          "settings": {
+            "size": {
+              ".validate": "newData.isNumber() && newData.val() >= 3 && newData.val() <= 6"
+            }
+          },
+          "gameId": {
+            ".validate": "newData.isString() && newData.val().length <= 80"
+          },
+          "currentTurnIndex": {
+            ".validate": "newData.isNumber() && newData.val() >= 0"
+          },
+          "turnOrder": {
+            "$index": {
+              ".validate": "$index.matches(/^[0-9]+$/) && newData.isString() && newData.val().length > 0 && newData.val().length <= 80"
+            }
+          },
+          "boards": {
+            "$studentId": {
+              "studentId": {
+                ".validate": "newData.isString() && newData.val().length > 0 && newData.val().length <= 80"
+              },
+              "name": {
+                ".validate": "newData.isString() && newData.val().length > 0 && newData.val().length <= 20"
+              },
+              "size": {
+                ".validate": "newData.isNumber() && newData.val() >= 3 && newData.val() <= 6"
+              },
+              "cells": {
+                "$index": {
+                  ".validate": "$index.matches(/^[0-9]+$/) && newData.isString() && newData.val().length > 0 && newData.val().length <= 40"
+                }
+              },
+              "marks": {
+                "$index": {
+                  ".validate": "$index.matches(/^[0-9]+$/) && newData.val() === true"
+                }
+              }
+            }
+          },
+          "currentCall": {
+            "callId": {
+              ".validate": "newData.isString() && newData.val().length > 0 && newData.val().length <= 120"
+            },
+            "studentId": {
+              ".validate": "newData.isString() && newData.val().length > 0 && newData.val().length <= 80"
+            },
+            "name": {
+              ".validate": "newData.isString() && newData.val().length > 0 && newData.val().length <= 20"
+            },
+            "concept": {
+              ".validate": "newData.isString() && newData.val().length > 0 && newData.val().length <= 60"
+            },
+            "explanation": {
+              ".validate": "newData.isString() && newData.val().length > 0 && newData.val().length <= 300"
+            },
+            "approvedAt": {
+              ".validate": "newData.isNumber()"
+            }
+          },
+          "calls": {
+            "$callId": {
+              "concept": {
+                ".validate": "newData.isString() && newData.val().length > 0 && newData.val().length <= 60"
+              },
+              "explanation": {
+                ".validate": "newData.isString() && newData.val().length > 0 && newData.val().length <= 300"
+              }
+            }
+          },
+          "claims": {
+            "$studentId": {
+              "lineCount": {
+                ".validate": "newData.isNumber() && newData.val() > 0 && newData.val() <= 14"
+              }
+            }
+          },
+          "winners": {
+            "$studentId": {
+              "rank": {
+                ".validate": "newData.isNumber() && newData.val() > 0"
+              },
+              "lineCount": {
+                ".validate": "newData.isNumber() && newData.val() > 0 && newData.val() <= 14"
+              }
+            }
+          }
+        },
+        "wordChallenge": {
+          "settings": {
+            "chosung": {
+              ".validate": "newData.isString() && newData.val().length <= 8 && (newData.val() === '' || newData.val().matches(/^[ㄱㄲㄴㄷㄸㄹㅁㅂㅃㅅㅆㅇㅈㅉㅊㅋㅌㅍㅎ]+$/))"
+            },
+            "duration": {
+              ".validate": "newData.isNumber() && newData.val() >= 10 && newData.val() <= 600"
+            }
+          },
+          "gameId": {
+            ".validate": "newData.isString() && newData.val().length <= 120"
+          },
+          "startedAt": {
+            ".validate": "!newData.exists() || newData.isNumber()"
+          },
+          "endedAt": {
+            ".validate": "!newData.exists() || newData.isNumber()"
+          },
+          "finishedAt": {
+            ".validate": "!newData.exists() || newData.isNumber()"
+          },
+          "submissions": {
+            "$submissionId": {
+              "participantId": {
+                ".validate": "newData.isString() && newData.val().length > 0 && newData.val().length <= 80"
+              },
+              "nickname": {
+                ".validate": "newData.isString() && newData.val().length > 0 && newData.val().length <= 20"
+              },
+              "originalWord": {
+                ".validate": "newData.isString() && newData.val().length > 0 && newData.val().length <= 20 && newData.val().matches(/^[가-힣]+$/)"
+              },
+              "normalizedWord": {
+                ".validate": "newData.isString() && newData.val().length > 0 && newData.val().length <= 20 && newData.val().matches(/^[가-힣]+$/)"
+              },
+              "status": {
+                ".validate": "newData.val() === 'pending' || newData.val() === 'approved' || newData.val() === 'rejected'"
+              },
+              "submittedAt": {
+                ".validate": "newData.isNumber()"
+              },
+              "reviewedAt": {
+                ".validate": "newData.isNumber()"
+              }
+            }
+          },
+          "claims": {
+            "$normalizedWord": {
+              ".validate": "$normalizedWord.matches(/^[가-힣]{1,20}$/)",
+              "submissionId": {
+                ".validate": "newData.isString() && newData.val().length > 0 && newData.val().length <= 140"
+              },
+              "participantId": {
+                ".validate": "newData.isString() && newData.val().length > 0 && newData.val().length <= 80"
+              },
+              "status": {
+                ".validate": "newData.val() === 'pending' || newData.val() === 'approved'"
+              },
+              "claimedAt": {
+                ".validate": "newData.isNumber()"
               }
             }
           }

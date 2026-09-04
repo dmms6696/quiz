@@ -81,6 +81,13 @@ const MEMORY_IMAGE_MAX_BYTES = 140 * 1024;
 const MEMORY_IMAGE_TOTAL_MAX_BYTES = 3 * 1024 * 1024;
 const MEMORY_PREVIEW_MS = 4000;
 const MEMORY_MISMATCH_DELAY_MS = 850;
+const DEFAULT_BINGO_SIZE = 3;
+const MIN_BINGO_SIZE = 3;
+const MAX_BINGO_SIZE = 6;
+const DEFAULT_WORD_CHALLENGE_SECONDS = 60;
+const MIN_WORD_CHALLENGE_SECONDS = 10;
+const MAX_WORD_CHALLENGE_SECONDS = 600;
+const MAX_WORD_CHALLENGE_LENGTH = 20;
 const GHOST_BINGO_REQUIRED_CONDITIONS = 8;
 const GHOST_BINGO_FREE_ID = "FREE";
 const GHOST_CHAT_MAX_LENGTH = 100;
@@ -228,6 +235,8 @@ const state = {
   timerId: null,
   toastId: null,
   answering: false,
+  quizShortAnswerDraft: "",
+  quizShortAnswerQuestionId: "",
   skipWriteKey: "",
   ghostJoinWriteKey: "",
   ghostBingoDraft: null,
@@ -268,6 +277,11 @@ const state = {
   unsubscribeMemoryRecords: null,
   memoryRecordsVisible: false,
   memoryResultBusy: false,
+  bingoConceptDraft: "",
+  bingoExplanationDraft: "",
+  wordChallengeDraft: "",
+  wordChallengeSubmitting: false,
+  wordChallengeReviewing: false,
   catchmindDrawing: {
     active: false,
     strokeId: "",
@@ -349,6 +363,8 @@ function renderHome() {
   clearMemorySubscriptions();
   clearMemoryImageDraft();
   state.memorySettingsDraft = null;
+  state.bingoConceptDraft = "";
+  state.bingoExplanationDraft = "";
 
   const savedRoom = localStorage.getItem("wbq_roomCode") || "";
   const savedName = localStorage.getItem("wbq_studentName") || "";
@@ -405,52 +421,39 @@ function renderHome() {
               <div class="mode-options">
                 <label class="mode-tile">
                   <input type="radio" name="teacherMode" value="quiz" checked />
-                  <span>
-                    <strong>퀴즈 배틀</strong>
-                    <small>학생들이 낸 4지선다 문제를 풉니다.</small>
-                  </span>
+                  <span><strong>퀴즈 배틀</strong></span>
                 </label>
                 <label class="mode-tile">
                   <input type="radio" name="teacherMode" value="compliment" />
-                  <span>
-                    <strong>칭찬 스무고개</strong>
-                    <small>익명 칭찬 단서로 친구를 추리합니다.</small>
-                  </span>
+                  <span><strong>칭찬 스무고개</strong></span>
                 </label>
                 <label class="mode-tile">
                   <input type="radio" name="teacherMode" value="mafia" />
-                  <span>
-                    <strong>교실 마피아 게임</strong>
-                    <small>역할 확인, 밤 행동, 토론, 투표를 패드로 진행합니다.</small>
-                  </span>
+                  <span><strong>교실 마피아</strong></span>
                 </label>
                 <label class="mode-tile">
                   <input type="radio" name="teacherMode" value="liar" />
-                  <span>
-                    <strong>라이어게임</strong>
-                    <small>비슷한 제시어 속 숨어 있는 라이어를 찾아라!</small>
-                  </span>
+                  <span><strong>라이어게임</strong></span>
                 </label>
                 <label class="mode-tile">
                   <input type="radio" name="teacherMode" value="catchmind" />
-                  <span>
-                    <strong>캐치마인드</strong>
-                    <small>그림을 보고 제시어를 가장 빠르게 맞혀라!</small>
-                  </span>
+                  <span><strong>캐치마인드</strong></span>
                 </label>
                 <label class="mode-tile">
                   <input type="radio" name="teacherMode" value="seat" />
-                  <span>
-                    <strong>자리바꾸기 게임</strong>
-                    <small>자리를 고르고, 카드를 사용하고, 마지막까지 내 자리를 지켜라!</small>
-                  </span>
+                  <span><strong>자리바꾸기</strong></span>
                 </label>
                 <label class="mode-tile">
                   <input type="radio" name="teacherMode" value="memory" />
-                  <span>
-                    <strong>메모리 배틀</strong>
-                    <small>카드의 위치를 기억하고 모든 이미지 짝을 가장 빠르게 찾아라!</small>
-                  </span>
+                  <span><strong>메모리 배틀</strong></span>
+                </label>
+                <label class="mode-tile">
+                  <input type="radio" name="teacherMode" value="bingo" />
+                  <span><strong>개념 빙고</strong></span>
+                </label>
+                <label class="mode-tile">
+                  <input type="radio" name="teacherMode" value="word" />
+                  <span><strong>초성 단어 챌린지</strong></span>
                 </label>
               </div>
             </div>
@@ -511,6 +514,16 @@ function renderStudentRoute() {
     return;
   }
 
+  if (getRoomMode() === "bingo") {
+    renderBingoStudentRoute();
+    return;
+  }
+
+  if (getRoomMode() === "word") {
+    renderWordChallengeStudentRoute();
+    return;
+  }
+
   const status = state.room.status || "waiting";
 
   if (status === "waiting") {
@@ -527,7 +540,7 @@ function renderStudentRoute() {
   }
 
   if (status === "playing") {
-    renderStudentQuiz(true);
+    renderStudentQuiz(false);
     return;
   }
 
@@ -546,6 +559,7 @@ function renderStudentRoute() {
 
 function renderStudentQuestionForm(existingQuestion = null) {
   const editingQuestion = existingQuestion;
+  const questionType = getQuestionType(editingQuestion);
   const choices = normalizeChoices(editingQuestion?.choices);
   const correctIndex = Number.isInteger(editingQuestion?.correctIndex) ? editingQuestion.correctIndex : -1;
 
@@ -560,12 +574,12 @@ function renderStudentQuestionForm(existingQuestion = null) {
         <aside class="panel tight">
           <h2>문제 만들기</h2>
           <div class="notice info">
-            자기 자신에 대한 가벼운 4지선다 문제를 만들어 주세요. 좋아하는 음식, 취미, 가고 싶은 나라, 좋아하는 색깔, 쉬는 시간에 자주 하는 일처럼 친구들이 즐겁게 맞힐 수 있는 주제가 좋습니다.
+            자기 자신에 대한 가벼운 4지선다 또는 주관식 문제를 만들어 주세요. 좋아하는 음식, 취미, 가고 싶은 나라, 좋아하는 색깔, 쉬는 시간에 자주 하는 일처럼 친구들이 즐겁게 맞힐 수 있는 주제가 좋습니다.
           </div>
           <div class="notice warn">
             집주소, 전화번호, 가족 사정, 외모, 몸무게, 성적, 돈, 건강, 연애, 특정 친구를 놀리는 내용은 쓰지 않습니다.
           </div>
-          <p class="muted small">한 학생은 최대 3문제까지 제출할 수 있고, 대기 화면에서 제출한 문제를 각각 수정할 수 있습니다.</p>
+          <p class="muted small">한 학생은 최대 ${getMaxQuestionsPerStudent()}문제까지 제출할 수 있고, 대기 화면에서 제출한 문제를 각각 수정할 수 있습니다.</p>
         </aside>
 
         <form id="questionForm" class="panel">
@@ -580,25 +594,40 @@ function renderStudentQuestionForm(existingQuestion = null) {
             <textarea id="questionText" maxlength="160" placeholder="예: 내가 가장 좋아하는 음식은 무엇일까요?" required>${escapeHtml(editingQuestion?.question || "")}</textarea>
           </div>
 
-          <div class="choice-input-grid">
-            ${[0, 1, 2, 3].map((index) => `
-              <div class="field">
-                <label for="choice${index}">선택지 ${index + 1}</label>
-                <input id="choice${index}" maxlength="80" value="${escapeAttr(choices[index] || "")}" required />
-              </div>
-            `).join("")}
+          <div class="field">
+            <span class="label">문제 유형</span>
+            <div class="segmented question-type-options">
+              <label class="radio-tile"><input type="radio" name="questionType" value="choice" ${questionType === "choice" ? "checked" : ""} /><span>4지선다</span></label>
+              <label class="radio-tile"><input type="radio" name="questionType" value="short" ${questionType === "short" ? "checked" : ""} /><span>주관식</span></label>
+            </div>
           </div>
 
-          <div class="field">
-            <span class="label">정답 번호</span>
-            <div class="answer-options">
+          <div id="choiceQuestionFields" ${questionType === "choice" ? "" : "hidden"}>
+            <div class="choice-input-grid">
               ${[0, 1, 2, 3].map((index) => `
-                <label class="radio-tile">
-                  <input type="radio" name="correctIndex" value="${index}" ${correctIndex === index ? "checked" : ""} />
-                  <span>${index + 1}</span>
-                </label>
+                <div class="field">
+                  <label for="choice${index}">선택지 ${index + 1}</label>
+                  <input id="choice${index}" maxlength="80" value="${escapeAttr(choices[index] || "")}" />
+                </div>
               `).join("")}
             </div>
+            <div class="field">
+              <span class="label">정답 번호</span>
+              <div class="answer-options">
+                ${[0, 1, 2, 3].map((index) => `
+                  <label class="radio-tile">
+                    <input type="radio" name="correctIndex" value="${index}" ${correctIndex === index ? "checked" : ""} />
+                    <span>${index + 1}</span>
+                  </label>
+                `).join("")}
+              </div>
+            </div>
+          </div>
+
+          <div id="shortQuestionFields" class="field" ${questionType === "short" ? "" : "hidden"}>
+            <label for="correctAnswer">주관식 정답</label>
+            <input id="correctAnswer" maxlength="80" value="${escapeAttr(editingQuestion?.correctAnswer || "")}" placeholder="정답을 입력하세요" />
+            <p class="muted small">띄어쓰기와 영문 대소문자는 다르게 써도 같은 정답으로 채점합니다.</p>
           </div>
 
           <div class="button-row">
@@ -612,6 +641,7 @@ function renderStudentQuestionForm(existingQuestion = null) {
     document.querySelector("#backHomeBtn").addEventListener("click", renderHome);
     document.querySelector("#questionForm").addEventListener("submit", submitQuestion);
     document.querySelector("#goWaitingBtn")?.addEventListener("click", () => renderStudentWaiting(true));
+    setupQuestionTypeFields();
   });
 }
 
@@ -1575,10 +1605,15 @@ function renderStudentQuiz(force = false) {
   }
 
   const total = questions.length;
+  const questionType = getQuestionType(question);
   const choices = normalizeChoices(question.choices);
   const disabled = Boolean(answer) || ownBlocked;
+  if (state.quizShortAnswerQuestionId !== question.id) {
+    state.quizShortAnswerQuestionId = question.id;
+    state.quizShortAnswerDraft = "";
+  }
 
-  setView(`student-quiz-${question.id}`, `
+  setView(`student-quiz-${question.id}-${Boolean(answer)}`, `
     <section class="quiz-stage">
       <div class="status-bar">
         <span class="pill blue">${currentIndex + 1} / ${total}</span>
@@ -1596,6 +1631,7 @@ function renderStudentQuiz(force = false) {
       <div class="quiz-question">
         <div class="question-meta">
           <span class="author-badge">출제자 ${escapeHtml(question.authorName || "익명")}</span>
+          <span class="pill ${questionType === "short" ? "gold" : "blue"}">${questionType === "short" ? "주관식" : "4지선다"}</span>
         </div>
         <h2>${escapeHtml(question.question)}</h2>
       </div>
@@ -1603,17 +1639,35 @@ function renderStudentQuiz(force = false) {
       ${ownBlocked ? `<div class="notice warn">내가 낸 문제라서 점수 대상이 아닙니다. 이 문제는 자동으로 0점 처리됩니다.</div>` : ""}
       ${answer && !answer.isSkipped ? `<div class="notice info">답변이 제출되었습니다. 선생님이 정답을 공개할 때까지 기다려 주세요.</div>` : ""}
 
-      <div class="choices">
-        ${choices.map((choice, index) => `
-          <button class="choice-btn choice-${index} ${answer?.selectedIndex === index ? "selected" : ""}" data-answer-index="${index}" type="button" ${disabled ? "disabled" : ""}>
-            <span class="choice-prefix">${index + 1}</span>${escapeHtml(choice)}
-          </button>
-        `).join("")}
-      </div>
+      ${questionType === "short" ? `
+        <form id="shortAnswerForm" class="panel short-answer-panel">
+          <div class="field">
+            <label for="shortAnswerInput">정답 입력</label>
+            <input id="shortAnswerInput" maxlength="80" autocomplete="off" value="${escapeAttr(answer?.textAnswer || state.quizShortAnswerDraft)}" placeholder="정답을 입력하세요" ${disabled ? "disabled" : ""} />
+          </div>
+          <button class="btn primary full" type="submit" ${disabled ? "disabled" : ""}>정답 제출</button>
+        </form>
+      ` : `
+        <div class="choices">
+          ${choices.map((choice, index) => `
+            <button class="choice-btn choice-${index} ${answer?.selectedIndex === index ? "selected" : ""}" data-answer-index="${index}" type="button" ${disabled ? "disabled" : ""}>
+              <span class="choice-prefix">${index + 1}</span>${escapeHtml(choice)}
+            </button>
+          `).join("")}
+        </div>
+      `}
     </section>
   `, () => {
     document.querySelectorAll("[data-answer-index]").forEach((button) => {
       button.addEventListener("click", () => submitAnswer(Number(button.dataset.answerIndex)));
+    });
+    const shortInput = document.querySelector("#shortAnswerInput");
+    shortInput?.addEventListener("input", () => {
+      state.quizShortAnswerDraft = shortInput.value;
+    });
+    document.querySelector("#shortAnswerForm")?.addEventListener("submit", (event) => {
+      event.preventDefault();
+      submitAnswer(null, cleanText(shortInput?.value || ""));
     });
     startTimer({
       startedAt: state.room.questionStartedAt,
@@ -1637,7 +1691,8 @@ function renderStudentResult(force = false) {
   const answer = getMyAnswer(question.id);
   const totalScore = getMyScore();
   const choices = normalizeChoices(question.choices);
-  const correctText = choices[question.correctIndex] || "";
+  const questionType = getQuestionType(question);
+  const correctText = getQuestionCorrectAnswerText(question);
 
   setView(`student-result-${question.id}`, `
     <section class="screen">
@@ -1648,7 +1703,7 @@ function renderStudentResult(force = false) {
 
       <div class="panel">
         <h2>${answerSummaryText(answer)}</h2>
-        <p class="lead">정답은 <strong>${question.correctIndex + 1}. ${escapeHtml(correctText)}</strong> 입니다.</p>
+        <p class="lead">정답은 <strong>${questionType === "choice" ? `${question.correctIndex + 1}. ` : ""}${escapeHtml(correctText)}</strong> 입니다.</p>
         ${answer ? `
           <div class="stats">
             <div class="stat">
@@ -1656,8 +1711,8 @@ function renderStudentResult(force = false) {
               <span class="num">${Number(answer.scoreEarned || 0)}</span>
             </div>
             <div class="stat">
-              <span class="muted">선택한 답</span>
-              <span class="num">${Number.isInteger(answer.selectedIndex) ? answer.selectedIndex + 1 : "-"}</span>
+              <span class="muted">내 답</span>
+              <span class="num answer-value">${questionType === "short" ? escapeHtml(answer.textAnswer || "-") : Number.isInteger(answer.selectedIndex) ? answer.selectedIndex + 1 : "-"}</span>
             </div>
             <div class="stat">
               <span class="muted">응답 시간</span>
@@ -1669,8 +1724,8 @@ function renderStudentResult(force = false) {
 
       <div class="grid-2">
         <section class="panel">
-          <h3>선택지별 응답 수</h3>
-          ${renderAnswerBars(question)}
+          <h3>${questionType === "short" ? "주관식 응답" : "선택지별 응답 수"}</h3>
+          ${renderQuestionResponseSummary(question)}
         </section>
         <section class="panel">
           <h3>현재 누적 랭킹</h3>
@@ -1726,6 +1781,16 @@ function renderDisplayRoute(force = false) {
     return;
   }
 
+  if (getRoomMode() === "bingo") {
+    renderBingoDisplay(force);
+    return;
+  }
+
+  if (getRoomMode() === "word") {
+    renderWordChallengeDisplay(force);
+    return;
+  }
+
   renderQuizDisplay(force);
 }
 
@@ -1742,7 +1807,11 @@ function renderDisplayShell(viewName, title, subtitle, bodyHtml, afterRender = n
             ? "seat-mode"
             : getRoomMode() === "memory"
               ? "memory-mode"
-            : "";
+              : getRoomMode() === "bingo"
+                ? "bingo-mode"
+                : getRoomMode() === "word"
+                  ? "word-challenge-mode"
+                  : "";
   setView(viewName, `
     <section class="screen display-stage ${modeClass}">
       <div class="display-header">
@@ -2099,6 +2168,16 @@ function renderTeacherDashboard(force = true) {
 
   if (getRoomMode() === "memory") {
     renderMemoryTeacherDashboard(force);
+    return;
+  }
+
+  if (getRoomMode() === "bingo") {
+    renderBingoTeacherDashboard(force);
+    return;
+  }
+
+  if (getRoomMode() === "word") {
+    renderWordChallengeTeacherDashboard(force);
     return;
   }
 
@@ -6635,6 +6714,513 @@ function renderMemoryDisplay(force = false) {
   renderDisplayShell(`display-memory-${status}-${game.gameId || "setup"}`, "메모리 배틀", "카드의 위치를 기억하고 모든 이미지 짝을 가장 빠르게 찾아라!", body, afterRender, force);
 }
 
+// =========================
+// 개념 빙고
+// =========================
+
+function getInitialBingoStateForWrite(size = DEFAULT_BINGO_SIZE) {
+  return {
+    settings: { size: clampInt(size, MIN_BINGO_SIZE, MAX_BINGO_SIZE, DEFAULT_BINGO_SIZE) },
+    gameId: "",
+    boards: null,
+    turnOrder: null,
+    currentTurnIndex: 0,
+    currentCall: null,
+    calls: null,
+    claims: null,
+    winners: null,
+    startedAt: null,
+    finishedAt: null
+  };
+}
+
+function getBingoState() {
+  return {
+    ...getInitialBingoStateForWrite(),
+    ...(state.room?.bingo || {}),
+    settings: {
+      ...getInitialBingoStateForWrite().settings,
+      ...(state.room?.bingo?.settings || {})
+    }
+  };
+}
+
+function getBingoSize() {
+  return clampInt(getBingoState().settings?.size, MIN_BINGO_SIZE, MAX_BINGO_SIZE, DEFAULT_BINGO_SIZE);
+}
+
+function normalizeBingoCells(value, size = getBingoSize()) {
+  const source = Array.isArray(value)
+    ? value
+    : Object.keys(value || {}).sort((a, b) => Number(a) - Number(b)).map((key) => value[key]);
+  return Array.from({ length: size * size }, (_, index) => cleanText(source[index] || ""));
+}
+
+function normalizeBingoMarks(value) {
+  return Object.fromEntries(Object.entries(value || {}).filter(([, marked]) => Boolean(marked)).map(([index]) => [String(index), true]));
+}
+
+function getBingoBoards() {
+  const size = getBingoSize();
+  return Object.entries(getBingoState().boards || {})
+    .map(([studentId, board]) => ({
+      studentId,
+      name: cleanText(board?.name || getStudentNameById(studentId)),
+      size: clampInt(board?.size, MIN_BINGO_SIZE, MAX_BINGO_SIZE, size),
+      cells: normalizeBingoCells(board?.cells, size),
+      marks: normalizeBingoMarks(board?.marks),
+      submittedAt: Number(board?.submittedAt || 0),
+      updatedAt: Number(board?.updatedAt || 0)
+    }))
+    .filter((board) => board.size === size && board.cells.length === size * size && board.cells.every(Boolean))
+    .sort((a, b) => String(a.name).localeCompare(String(b.name), "ko"));
+}
+
+function getMyBingoBoard() {
+  return getBingoBoards().find((board) => board.studentId === state.studentId) || null;
+}
+
+function getBingoTurnOrder() {
+  return normalizeIndexedList(getBingoState().turnOrder);
+}
+
+function getCurrentBingoTurnStudent() {
+  const order = getBingoTurnOrder();
+  if (!order.length) return null;
+  const index = Math.max(0, Number(getBingoState().currentTurnIndex || 0)) % order.length;
+  const studentId = order[index];
+  const board = getBingoBoards().find((item) => item.studentId === studentId);
+  return board ? { id: studentId, name: board.name } : { id: studentId, name: getStudentNameById(studentId) };
+}
+
+function getBingoWinners() {
+  return Object.entries(getBingoState().winners || {})
+    .map(([studentId, winner]) => ({ studentId, ...winner, rank: Number(winner.rank || 0) }))
+    .sort((a, b) => a.rank - b.rank || Number(a.approvedAt || 0) - Number(b.approvedAt || 0));
+}
+
+function countBingoLines(board) {
+  if (!board) return 0;
+  const size = board.size || getBingoSize();
+  const marked = (index) => Boolean(board.marks?.[String(index)] || board.marks?.[index]);
+  let lines = 0;
+  for (let row = 0; row < size; row += 1) {
+    if (Array.from({ length: size }, (_, column) => row * size + column).every(marked)) lines += 1;
+  }
+  for (let column = 0; column < size; column += 1) {
+    if (Array.from({ length: size }, (_, row) => row * size + column).every(marked)) lines += 1;
+  }
+  if (Array.from({ length: size }, (_, index) => index * size + index).every(marked)) lines += 1;
+  if (Array.from({ length: size }, (_, index) => index * size + (size - index - 1)).every(marked)) lines += 1;
+  return lines;
+}
+
+function renderBingoStudentRoute() {
+  const status = state.room?.status || "waiting";
+  if (status === "finished") {
+    renderBingoFinalResult("student-bingo-final", false, true);
+    return;
+  }
+  if (status === "bingoPlaying") {
+    renderBingoStudentPlay(false);
+    return;
+  }
+  renderBingoStudentForm(false);
+}
+
+function renderBingoStudentForm(force = false) {
+  const size = getBingoSize();
+  const board = getMyBingoBoard();
+  const values = board?.cells || Array(size * size).fill("");
+  setView(`student-bingo-form-${size}-${Boolean(board)}`, `
+    <section class="screen bingo-mode">
+      <div class="status-bar">
+        <button class="btn ghost" id="backHomeBtn" type="button">처음으로</button>
+        <span class="pill blue">방 코드 ${escapeHtml(state.roomCode)}</span>
+        <span class="pill ${board ? "green" : "gold"}">${board ? "빙고판 제출 완료" : `${size}×${size} 작성 중`}</span>
+      </div>
+      <section class="panel bingo-intro-panel">
+        <h1>배운 개념으로 빙고판을 채워 주세요.</h1>
+        <p class="lead">각 칸에는 서로 다른 개념이나 핵심어를 하나씩 적으세요. 게임 시작 전까지 수정할 수 있습니다.</p>
+      </section>
+      <form id="bingoBoardForm" class="panel">
+        <div class="bingo-entry-grid" style="--bingo-size:${size}">
+          ${values.map((value, index) => `
+            <label class="bingo-entry-cell">
+              <span>${index + 1}</span>
+              <input data-bingo-entry="${index}" maxlength="40" value="${escapeAttr(value)}" placeholder="개념" required />
+            </label>
+          `).join("")}
+        </div>
+        <button class="btn primary full" type="submit">${board ? "빙고판 수정 저장" : "빙고판 제출"}</button>
+      </form>
+      <div class="notice info">현재 ${getBingoBoards().length}명이 빙고판을 제출했습니다. 선생님이 시작하면 자동으로 이동합니다.</div>
+    </section>
+  `, () => {
+    document.querySelector("#backHomeBtn")?.addEventListener("click", renderHome);
+    document.querySelector("#bingoBoardForm")?.addEventListener("submit", submitBingoBoard);
+  }, force);
+}
+
+function renderBingoStudentPlay(force = false) {
+  const game = getBingoState();
+  const board = getMyBingoBoard();
+  const currentStudent = getCurrentBingoTurnStudent();
+  const call = game.currentCall || null;
+  const approved = Boolean(call?.approvedAt);
+  const isMyTurn = currentStudent?.id === state.studentId;
+  const claim = game.claims?.[state.studentId] || null;
+  const winner = game.winners?.[state.studentId] || null;
+  if (!board) {
+    setView("student-bingo-no-board", `<section class="screen bingo-mode"><div class="panel"><h2>이번 게임에 제출된 내 빙고판이 없습니다.</h2><p class="lead">다음 게임을 기다려 주세요.</p></div></section>`);
+    return;
+  }
+  const marksKey = Object.keys(board.marks).sort((a, b) => Number(a) - Number(b)).join("-");
+  const viewName = `student-bingo-play-${game.gameId}-${game.currentTurnIndex}-${call?.callId || "none"}-${approved}-${marksKey}-${Boolean(claim)}-${Boolean(winner)}`;
+  setView(viewName, `
+    <section class="screen bingo-mode">
+      <div class="status-bar">
+        <div><p class="eyebrow">현재 차례</p><h1>${escapeHtml(currentStudent?.name || "-")}</h1></div>
+        <span class="pill blue">${Number(game.currentTurnIndex || 0) + 1} / ${getBingoTurnOrder().length}</span>
+        <span class="pill green">완성 ${countBingoLines(board)}빙고</span>
+      </div>
+      ${renderBingoCurrentCall(call, currentStudent)}
+      ${!call && isMyTurn ? `
+        <form id="bingoCallForm" class="panel bingo-call-form">
+          <h2>개념을 말하고 설명을 적어 주세요.</h2>
+          <div class="field"><label for="bingoConceptInput">개념</label><input id="bingoConceptInput" maxlength="60" value="${escapeAttr(state.bingoConceptDraft)}" placeholder="예: 은유" required /></div>
+          <div class="field"><label for="bingoExplanationInput">개념 설명</label><textarea id="bingoExplanationInput" maxlength="300" placeholder="친구들이 이해할 수 있도록 뜻이나 예를 설명하세요." required>${escapeHtml(state.bingoExplanationDraft)}</textarea></div>
+          <button class="btn primary" type="submit">설명 제출</button>
+        </form>
+      ` : ""}
+      ${!call && !isMyTurn ? `<div class="notice info">${escapeHtml(currentStudent?.name || "차례 학생")} 학생이 개념과 설명을 제출할 때까지 기다려 주세요.</div>` : ""}
+      ${call && !approved ? `<div class="notice warn">선생님이 설명을 확인하고 있습니다. 승인 후 색칠할 수 있습니다.</div>` : ""}
+      ${approved ? `<div class="notice success">설명이 승인되었습니다. 같은 개념이나 관련 표현이 적힌 칸을 스스로 색칠하세요.</div>` : ""}
+      <section class="panel bingo-board-panel">
+        <div class="status-bar"><h2>내 빙고판</h2><span class="pill ${winner ? "gold" : claim ? "blue" : "green"}">${winner ? `${winner.rank}번째 빙고 인정` : claim ? "빙고 확인 요청 중" : `${countBingoLines(board)}줄 완성`}</span></div>
+        ${renderBingoBoard(board, { interactive: !winner, allowMark: approved })}
+        <p class="muted small">색칠된 칸을 다시 누르면 언제든 취소할 수 있습니다.</p>
+        ${countBingoLines(board) > 0 && !claim && !winner ? `<button class="btn success" id="claimBingoBtn" type="button">빙고 외치기</button>` : ""}
+      </section>
+      <section class="panel"><h3>차례 순서</h3>${renderBingoTurnOrder()}</section>
+    </section>
+  `, () => {
+    const conceptInput = document.querySelector("#bingoConceptInput");
+    const explanationInput = document.querySelector("#bingoExplanationInput");
+    conceptInput?.addEventListener("input", () => { state.bingoConceptDraft = conceptInput.value; });
+    explanationInput?.addEventListener("input", () => { state.bingoExplanationDraft = explanationInput.value; });
+    document.querySelector("#bingoCallForm")?.addEventListener("submit", submitBingoCall);
+    document.querySelectorAll("[data-bingo-cell]").forEach((button) => button.addEventListener("click", () => toggleBingoCell(Number(button.dataset.bingoCell))));
+    document.querySelector("#claimBingoBtn")?.addEventListener("click", claimBingo);
+  }, force);
+}
+
+function renderBingoTeacherDashboard(force = true) {
+  const status = state.room?.status || "waiting";
+  if (status === "finished") {
+    renderBingoFinalResult("teacher-bingo-final", true, force);
+    return;
+  }
+  const boards = getBingoBoards();
+  const game = getBingoState();
+  const currentStudent = getCurrentBingoTurnStudent();
+  const call = game.currentCall || null;
+  const claims = Object.entries(game.claims || {});
+  setView(`teacher-bingo-${status}-${boards.length}-${game.currentTurnIndex}-${call?.callId || "none"}-${Boolean(call?.approvedAt)}-${getBingoWinners().length}-${claims.length}`, `
+    <section class="screen bingo-mode">
+      <div class="status-bar">
+        <div><p class="eyebrow">교사 화면</p><h1>개념 빙고</h1></div>
+        <div class="button-row"><span class="pill ${statusPillClass(status)}">${statusLabel(status)}</span><button class="btn ghost" id="copyRoomCodeBtn" type="button">방 코드 ${escapeHtml(state.roomCode)}</button><button class="btn dark" data-action="open-display" type="button">교실 화면 팝업</button><button class="btn ghost" id="backHomeBtn" type="button">처음으로</button></div>
+      </div>
+      <div class="teacher-grid">
+        <aside class="panel">
+          ${renderTeacherModeControls()}
+          ${status === "waiting" ? `
+            <section class="panel tight">
+              <h2>빙고 설정</h2>
+              <div class="field"><label for="bingoSizeInput">빙고판 크기 N×N</label><input id="bingoSizeInput" type="number" min="${MIN_BINGO_SIZE}" max="${MAX_BINGO_SIZE}" value="${getBingoSize()}" /></div>
+              <button class="btn primary" data-action="bingo-save-settings" type="button">설정 저장</button>
+              <p class="muted small">크기를 바꾸면 이미 제출된 빙고판은 초기화됩니다.</p>
+            </section>
+            <button class="btn success full" data-action="bingo-start" type="button" ${boards.length ? "" : "disabled"}>${boards.length}명으로 게임 시작</button>
+          ` : `
+            <section class="panel tight">
+              <p class="eyebrow">현재 차례</p><h2>${escapeHtml(currentStudent?.name || "-")}</h2>
+              ${renderBingoCurrentCall(call, currentStudent)}
+              <div class="button-row">
+                <button class="btn success" data-action="bingo-approve-call" type="button" ${call && !call.approvedAt ? "" : "disabled"}>설명 승인</button>
+                <button class="btn danger" data-action="bingo-reject-call" type="button" ${call && !call.approvedAt ? "" : "disabled"}>다시 설명</button>
+                <button class="btn primary" data-action="bingo-next-turn" type="button" ${call?.approvedAt ? "" : "disabled"}>색칠 완료 · 다음 차례</button>
+                <button class="btn ghost" data-action="bingo-skip-turn" type="button">차례 건너뛰기</button>
+              </div>
+            </section>
+            <section class="panel tight"><h3>차례 순서</h3>${renderBingoTurnOrder()}</section>
+          `}
+          ${claims.length ? `<section class="panel tight"><h3>빙고 확인 요청</h3>${claims.map(([studentId, claim]) => `<div class="list-row split"><strong>${escapeHtml(claim.name || getStudentNameById(studentId))} · ${Number(claim.lineCount || 0)}빙고</strong><div class="button-row"><button class="btn success" data-bingo-approve-claim="${escapeAttr(studentId)}" type="button">인정</button><button class="btn danger" data-bingo-reject-claim="${escapeAttr(studentId)}" type="button">반려</button></div></div>`).join("")}</section>` : ""}
+          ${getBingoWinners().length ? `<section class="panel tight"><h3>인정된 빙고</h3>${renderBingoWinners()}</section>` : ""}
+          <div class="button-row"><button class="btn danger" data-action="reset" type="button">게임 초기화</button><button class="btn danger" data-action="clear-room" type="button">학생/자료 목록 초기화</button>${status === "bingoPlaying" ? `<button class="btn dark" data-action="bingo-finish" type="button">게임 종료</button>` : ""}</div>
+        </aside>
+        <div class="screen">
+          <section class="panel"><div class="status-bar"><div><h2>학생 빙고판 실시간 확인</h2><p class="muted">색칠된 칸을 누르면 교사가 색칠을 취소할 수 있습니다.</p></div><span class="pill blue">제출 ${boards.length}명</span></div></section>
+          <div class="bingo-board-gallery">${boards.length ? boards.map((board) => renderBingoTeacherBoard(board, status === "bingoPlaying")).join("") : `<div class="empty">학생들이 빙고판을 제출하면 여기에 표시됩니다.</div>`}</div>
+        </div>
+      </div>
+    </section>
+  `, () => {
+    document.querySelector("#backHomeBtn")?.addEventListener("click", renderHome);
+    document.querySelector("#copyRoomCodeBtn")?.addEventListener("click", copyRoomCode);
+    document.querySelectorAll("[data-switch-mode]").forEach((button) => button.addEventListener("click", () => switchRoomMode(button.dataset.switchMode)));
+    document.querySelectorAll("[data-action]").forEach((button) => button.addEventListener("click", () => handleTeacherAction(button.dataset.action)));
+    document.querySelectorAll("[data-bingo-teacher-unmark]").forEach((button) => button.addEventListener("click", () => teacherUnmarkBingoCell(button.dataset.bingoStudent, Number(button.dataset.bingoTeacherUnmark))));
+    document.querySelectorAll("[data-bingo-approve-claim]").forEach((button) => button.addEventListener("click", () => approveBingoClaim(button.dataset.bingoApproveClaim)));
+    document.querySelectorAll("[data-bingo-reject-claim]").forEach((button) => button.addEventListener("click", () => rejectBingoClaim(button.dataset.bingoRejectClaim)));
+  }, force);
+}
+
+function renderBingoBoard(board, { interactive = false, allowMark = false, teacher = false } = {}) {
+  const size = board.size || getBingoSize();
+  return `<div class="bingo-board" style="--bingo-size:${size}">${board.cells.map((cell, index) => {
+    const marked = Boolean(board.marks?.[String(index)]);
+    const enabled = interactive && (allowMark || marked);
+    const teacherAction = teacher && marked;
+    return `<button class="bingo-cell ${marked ? "is-marked" : ""}" type="button" ${enabled ? `data-bingo-cell="${index}"` : ""} ${teacherAction ? `data-bingo-teacher-unmark="${index}" data-bingo-student="${escapeAttr(board.studentId)}"` : ""} ${enabled || teacherAction ? "" : "disabled"}><span>${escapeHtml(cell)}</span>${marked ? `<strong>✓</strong>` : ""}</button>`;
+  }).join("")}</div>`;
+}
+
+function renderBingoTeacherBoard(board, canUnmark) {
+  return `<article class="bingo-board-card"><div class="status-bar"><h3>${escapeHtml(board.name)}</h3><span class="pill ${countBingoLines(board) ? "green" : "blue"}">${countBingoLines(board)}빙고</span></div>${renderBingoBoard(board, { teacher: canUnmark })}</article>`;
+}
+
+function renderBingoCurrentCall(call, currentStudent) {
+  if (!call) return `<div class="notice info">${escapeHtml(currentStudent?.name || "차례 학생")} 학생이 설명할 개념을 준비하고 있습니다.</div>`;
+  return `<section class="panel bingo-call-card"><div class="status-bar"><div><p class="eyebrow">${call.approvedAt ? "설명 승인 완료" : "설명 확인 대기"}</p><h2>${escapeHtml(call.concept || "")}</h2></div><span class="pill ${call.approvedAt ? "green" : "gold"}">${call.approvedAt ? "색칠 가능" : "교사 확인 중"}</span></div><p class="lead">${escapeHtml(call.explanation || "")}</p><p class="muted small">발표: ${escapeHtml(call.name || currentStudent?.name || "")}</p></section>`;
+}
+
+function renderBingoTurnOrder() {
+  const order = getBingoTurnOrder();
+  const currentIndex = Number(getBingoState().currentTurnIndex || 0);
+  if (!order.length) return `<div class="empty">게임을 시작하면 순서가 정해집니다.</div>`;
+  return `<div class="tag-list">${order.map((studentId, index) => `<span class="tag ${index === currentIndex ? "active" : ""}">${index + 1}. ${escapeHtml(getBingoBoards().find((board) => board.studentId === studentId)?.name || getStudentNameById(studentId))}</span>`).join("")}</div>`;
+}
+
+function renderBingoWinners() {
+  const winners = getBingoWinners();
+  if (!winners.length) return `<div class="empty">아직 교사가 인정한 빙고가 없습니다.</div>`;
+  return `<div class="ranking">${winners.map((winner) => `<div class="ranking-row rank-${winner.rank}"><span class="rank-medal">${winner.rank}</span><strong>${escapeHtml(winner.name || getStudentNameById(winner.studentId))}</strong><span class="score">${Number(winner.lineCount || 0)}빙고</span></div>`).join("")}</div>`;
+}
+
+function renderBingoDisplay(force = false) {
+  const status = state.room?.status || "waiting";
+  const game = getBingoState();
+  const currentStudent = getCurrentBingoTurnStudent();
+  const call = game.currentCall || null;
+  let body = "";
+  if (status === "finished") {
+    body = `<section class="panel"><h2>빙고 결과</h2>${renderBingoWinners()}</section>`;
+  } else if (status === "bingoPlaying") {
+    body = `<section class="panel bingo-call-card"><p class="eyebrow">현재 차례</p><h1>${escapeHtml(currentStudent?.name || "-")}</h1>${renderBingoCurrentCall(call, currentStudent)}</section>${getBingoWinners().length ? `<section class="panel"><h2>인정된 빙고</h2>${renderBingoWinners()}</section>` : ""}`;
+  } else {
+    body = `<section class="panel result-panel"><p class="eyebrow">${getBingoSize()}×${getBingoSize()} 개념 빙고</p><h1>빙고판 작성 중</h1><div class="stats"><div class="stat"><span class="muted">제출 완료</span><span class="num">${getBingoBoards().length}명</span></div><div class="stat"><span class="muted">접속 학생</span><span class="num">${getStudents().filter((student) => student.connected).length}명</span></div></div></section>`;
+  }
+  renderDisplayShell(`display-bingo-${status}-${game.gameId || "setup"}-${game.currentTurnIndex}-${call?.callId || "none"}-${Boolean(call?.approvedAt)}-${getBingoWinners().length}`, "개념 빙고", "개념을 정확히 설명하고 관련 칸을 색칠하세요.", body, null, force);
+}
+
+function renderBingoFinalResult(viewName, showTeacherControls, force = false) {
+  setView(viewName, `<section class="screen bingo-mode"><div class="status-bar"><div><p class="eyebrow">개념 빙고 종료</p><h1>최종 결과</h1></div><span class="pill gold">빙고 완료</span></div><section class="panel">${renderBingoWinners()}</section>${showTeacherControls ? `<div class="button-row"><button class="btn success" data-action="reset" type="button">같은 빙고판으로 다시 하기</button><button class="btn danger" data-action="clear-room" type="button">학생/자료 목록 초기화</button></div>` : `<div class="notice info">선생님이 다음 게임을 준비할 때까지 기다려 주세요.</div>`}</section>`, () => {
+    document.querySelectorAll("[data-action]").forEach((button) => button.addEventListener("click", () => handleTeacherAction(button.dataset.action)));
+  }, force);
+}
+
+async function submitBingoBoard(event) {
+  event.preventDefault();
+  if ((state.room?.status || "waiting") !== "waiting") return showToast("게임 시작 후에는 빙고판을 수정할 수 없습니다.", "error");
+  const size = getBingoSize();
+  const cells = Array.from(document.querySelectorAll("[data-bingo-entry]")).sort((a, b) => Number(a.dataset.bingoEntry) - Number(b.dataset.bingoEntry)).map((input) => cleanText(input.value));
+  if (cells.length !== size * size || cells.some((cell) => !cell)) return showToast(`${size * size}칸을 모두 입력해 주세요.`, "error");
+  if (new Set(cells.map((cell) => normalizeShortAnswer(cell))).size !== cells.length) return showToast("같은 개념을 중복해서 쓸 수 없습니다.", "error");
+  const existing = getMyBingoBoard();
+  try {
+    await set(ref(db, `rooms/${state.roomCode}/bingo/boards/${state.studentId}`), { studentId: state.studentId, name: state.studentName, size, cells, marks: null, submittedAt: existing?.submittedAt || serverTimestamp(), updatedAt: serverTimestamp() });
+    showToast("빙고판을 제출했습니다.", "success");
+    renderBingoStudentForm(true);
+  } catch (error) {
+    console.error(error);
+    showToast("빙고판을 저장하지 못했습니다.", "error");
+  }
+}
+
+async function saveBingoSettings() {
+  if ((state.room?.status || "waiting") !== "waiting") return;
+  const size = clampInt(document.querySelector("#bingoSizeInput")?.value, MIN_BINGO_SIZE, MAX_BINGO_SIZE, getBingoSize());
+  if (size !== getBingoSize() && getBingoBoards().length && !window.confirm("크기를 바꾸면 학생들이 제출한 빙고판이 모두 지워집니다. 계속할까요?")) return;
+  try {
+    await update(roomRef(state.roomCode), { bingo: getInitialBingoStateForWrite(size) });
+    showToast(`${size}×${size} 빙고판으로 설정했습니다.`, "success");
+  } catch (error) {
+    console.error(error);
+    showToast("빙고 설정을 저장하지 못했습니다.", "error");
+  }
+}
+
+async function startBingoGame() {
+  const boards = getBingoBoards();
+  if (!boards.length) return showToast("제출된 빙고판이 없습니다.", "error");
+  const gameId = `bingo_${Date.now()}`;
+  const turnOrder = shuffleArray(boards.map((board) => board.studentId));
+  const updates = { status: "bingoPlaying", "bingo/gameId": gameId, "bingo/turnOrder": turnOrder, "bingo/currentTurnIndex": 0, "bingo/currentCall": null, "bingo/calls": null, "bingo/claims": null, "bingo/winners": null, "bingo/startedAt": serverTimestamp(), "bingo/finishedAt": null };
+  boards.forEach((board) => { updates[`bingo/boards/${board.studentId}/marks`] = null; });
+  try {
+    openDisplayWindow({ silent: true });
+    await update(roomRef(state.roomCode), updates);
+    showToast("차례를 섞어 개념 빙고를 시작했습니다.", "success");
+  } catch (error) {
+    console.error(error);
+    showToast("빙고 게임을 시작하지 못했습니다.", "error");
+  }
+}
+
+async function submitBingoCall(event) {
+  event.preventDefault();
+  const currentStudent = getCurrentBingoTurnStudent();
+  if (state.room?.status !== "bingoPlaying" || currentStudent?.id !== state.studentId || getBingoState().currentCall) return showToast("지금은 설명을 제출할 차례가 아닙니다.", "error");
+  const concept = cleanText(document.querySelector("#bingoConceptInput")?.value || state.bingoConceptDraft);
+  const explanation = cleanText(document.querySelector("#bingoExplanationInput")?.value || state.bingoExplanationDraft);
+  if (!concept || !explanation) return showToast("개념과 설명을 모두 입력해 주세요.", "error");
+  const callId = `${getBingoState().gameId}_${Number(getBingoState().currentTurnIndex || 0)}_${Date.now()}`;
+  try {
+    await set(ref(db, `rooms/${state.roomCode}/bingo/currentCall`), { callId, studentId: state.studentId, name: state.studentName, concept, explanation, submittedAt: serverTimestamp(), approvedAt: null });
+    state.bingoConceptDraft = "";
+    state.bingoExplanationDraft = "";
+    showToast("설명을 제출했습니다. 선생님의 확인을 기다려 주세요.", "success");
+  } catch (error) {
+    console.error(error);
+    showToast("설명을 제출하지 못했습니다.", "error");
+  }
+}
+
+async function approveBingoCall() {
+  const call = getBingoState().currentCall;
+  if (!call || call.approvedAt) return;
+  const approvedAt = Date.now();
+  try {
+    await update(roomRef(state.roomCode), { "bingo/currentCall/approvedAt": approvedAt, [`bingo/calls/${call.callId}`]: { ...call, approvedAt } });
+    showToast("설명을 승인했습니다. 학생들이 색칠할 수 있습니다.", "success");
+  } catch (error) {
+    console.error(error);
+    showToast("설명을 승인하지 못했습니다.", "error");
+  }
+}
+
+async function rejectBingoCall() {
+  if (!getBingoState().currentCall) return;
+  try {
+    await update(roomRef(state.roomCode), { "bingo/currentCall": null });
+    showToast("다시 설명하도록 요청했습니다.", "success");
+  } catch (error) {
+    console.error(error);
+    showToast("설명 요청을 되돌리지 못했습니다.", "error");
+  }
+}
+
+async function nextBingoTurn({ skip = false } = {}) {
+  const game = getBingoState();
+  const order = getBingoTurnOrder();
+  if (!order.length) return;
+  if (!skip && !game.currentCall?.approvedAt) return showToast("설명을 승인한 뒤 다음 차례로 이동해 주세요.", "error");
+  if (skip && !window.confirm("현재 차례를 건너뛸까요?")) return;
+  try {
+    await update(roomRef(state.roomCode), { "bingo/currentTurnIndex": (Number(game.currentTurnIndex || 0) + 1) % order.length, "bingo/currentCall": null });
+  } catch (error) {
+    console.error(error);
+    showToast("다음 차례로 이동하지 못했습니다.", "error");
+  }
+}
+
+async function toggleBingoCell(index) {
+  const board = getMyBingoBoard();
+  if (!board || state.room?.status !== "bingoPlaying" || index < 0 || index >= board.cells.length) return;
+  const marked = Boolean(board.marks?.[String(index)]);
+  if (!marked && !getBingoState().currentCall?.approvedAt) return showToast("선생님이 설명을 승인한 뒤 색칠할 수 있습니다.", "error");
+  try {
+    await set(ref(db, `rooms/${state.roomCode}/bingo/boards/${state.studentId}/marks/${index}`), marked ? null : true);
+  } catch (error) {
+    console.error(error);
+    showToast("색칠 상태를 저장하지 못했습니다.", "error");
+  }
+}
+
+async function teacherUnmarkBingoCell(studentId, index) {
+  if (!window.confirm("이 칸의 색칠을 취소할까요?")) return;
+  try {
+    await Promise.all([
+      remove(ref(db, `rooms/${state.roomCode}/bingo/boards/${studentId}/marks/${index}`)),
+      remove(ref(db, `rooms/${state.roomCode}/bingo/claims/${studentId}`)),
+      remove(ref(db, `rooms/${state.roomCode}/bingo/winners/${studentId}`))
+    ]);
+    showToast("잘못 색칠한 칸을 취소했습니다.", "success");
+  } catch (error) {
+    console.error(error);
+    showToast("색칠을 취소하지 못했습니다.", "error");
+  }
+}
+
+async function claimBingo() {
+  const board = getMyBingoBoard();
+  const lineCount = countBingoLines(board);
+  if (!lineCount) return showToast("완성된 빙고 줄이 없습니다.", "error");
+  try {
+    await set(ref(db, `rooms/${state.roomCode}/bingo/claims/${state.studentId}`), { studentId: state.studentId, name: state.studentName, lineCount, claimedAt: serverTimestamp() });
+    showToast("빙고를 외쳤습니다! 선생님이 확인합니다.", "success");
+  } catch (error) {
+    console.error(error);
+    showToast("빙고 확인을 요청하지 못했습니다.", "error");
+  }
+}
+
+async function approveBingoClaim(studentId) {
+  const board = getBingoBoards().find((item) => item.studentId === studentId);
+  const lineCount = countBingoLines(board);
+  if (!lineCount) return showToast("현재 완성된 빙고 줄이 없어 인정할 수 없습니다.", "error");
+  const existing = getBingoState().winners?.[studentId];
+  const rank = existing?.rank || getBingoWinners().length + 1;
+  try {
+    await update(roomRef(state.roomCode), { [`bingo/winners/${studentId}`]: { studentId, name: board.name, rank, lineCount, approvedAt: serverTimestamp() }, [`bingo/claims/${studentId}`]: null });
+    showToast(`${board.name} 학생의 빙고를 인정했습니다.`, "success");
+  } catch (error) {
+    console.error(error);
+    showToast("빙고를 인정하지 못했습니다.", "error");
+  }
+}
+
+async function rejectBingoClaim(studentId) {
+  try {
+    await remove(ref(db, `rooms/${state.roomCode}/bingo/claims/${studentId}`));
+    showToast("빙고 요청을 반려했습니다.", "success");
+  } catch (error) {
+    console.error(error);
+    showToast("빙고 요청을 반려하지 못했습니다.", "error");
+  }
+}
+
+async function finishBingoGame() {
+  if (!window.confirm("개념 빙고를 종료하고 결과를 공개할까요?")) return;
+  try {
+    await update(roomRef(state.roomCode), { status: "finished", "bingo/finishedAt": serverTimestamp(), finishedAt: serverTimestamp() });
+  } catch (error) {
+    console.error(error);
+    showToast("빙고 게임을 종료하지 못했습니다.", "error");
+  }
+}
+
+function getBingoResetStatePreservingBoards() {
+  const next = getInitialBingoStateForWrite(getBingoSize());
+  const boards = getBingoBoards();
+  if (boards.length) {
+    next.boards = Object.fromEntries(boards.map((board) => [board.studentId, { studentId: board.studentId, name: board.name, size: board.size, cells: board.cells, marks: null, submittedAt: board.submittedAt, updatedAt: board.updatedAt }]));
+  }
+  return next;
+}
+
 function renderFinalResult(viewName, showTeacherControls, force = false) {
   const ranking = getCumulativeRanking();
   const [first, second, third] = ranking;
@@ -6669,6 +7255,493 @@ function renderFinalResult(viewName, showTeacherControls, force = false) {
     document.querySelector("[data-action='reset']")?.addEventListener("click", resetGame);
     document.querySelector("[data-action='clear-room']")?.addEventListener("click", clearRoomLists);
   }, force);
+}
+
+// =========================
+// 초성 단어 챌린지
+// =========================
+
+const WORD_CHOSEONG = "ㄱㄲㄴㄷㄸㄹㅁㅂㅃㅅㅆㅇㅈㅉㅊㅋㅌㅍㅎ";
+const WORD_MODERN_CHOSEONG = "ᄀᄁᄂᄃᄄᄅᄆᄇᄈᄉᄊᄋᄌᄍᄎᄏᄐᄑᄒ";
+
+function getInitialWordChallengeStateForWrite(settings = {}) {
+  return {
+    settings: {
+      chosung: normalizeWordChallengeChosung(settings.chosung || ""),
+      duration: clampInt(settings.duration, MIN_WORD_CHALLENGE_SECONDS, MAX_WORD_CHALLENGE_SECONDS, DEFAULT_WORD_CHALLENGE_SECONDS)
+    },
+    gameId: "",
+    startedAt: null,
+    endedAt: null,
+    finishedAt: null,
+    submissions: null,
+    claims: null
+  };
+}
+
+function getWordChallengeState() {
+  const initial = getInitialWordChallengeStateForWrite();
+  return {
+    ...initial,
+    ...(state.room?.wordChallenge || {}),
+    settings: {
+      ...initial.settings,
+      ...(state.room?.wordChallenge?.settings || {})
+    }
+  };
+}
+
+function getWordChallengeResetState(preserveSettings = false) {
+  return getInitialWordChallengeStateForWrite(preserveSettings ? getWordChallengeState().settings : {});
+}
+
+function normalizeWordChallengeChosung(value) {
+  return [...String(value || "").replace(/\s+/g, "")]
+    .map((character) => {
+      const modernIndex = WORD_MODERN_CHOSEONG.indexOf(character);
+      return modernIndex >= 0 ? WORD_CHOSEONG[modernIndex] : character;
+    })
+    .join("");
+}
+
+function isValidWordChallengeChosung(value) {
+  const normalized = normalizeWordChallengeChosung(value);
+  return Boolean(normalized) && [...normalized].every((character) => WORD_CHOSEONG.includes(character));
+}
+
+function normalizeWordChallengeWord(value) {
+  return String(value || "").normalize("NFC").trim().replace(/\s+/g, "");
+}
+
+function extractWordChosung(value) {
+  const word = normalizeWordChallengeWord(value);
+  let result = "";
+  for (const character of word) {
+    const code = character.codePointAt(0);
+    if (code < 0xac00 || code > 0xd7a3) return "";
+    result += WORD_CHOSEONG[Math.floor((code - 0xac00) / 588)];
+  }
+  return result;
+}
+
+function getWordChallengeNow() {
+  return Date.now() + Number(state.serverTimeOffset || 0);
+}
+
+function getWordChallengeRemainingMs(game = getWordChallengeState()) {
+  const startedAt = Number(game.startedAt || 0);
+  if (!startedAt) return Number(game.settings?.duration || DEFAULT_WORD_CHALLENGE_SECONDS) * 1000;
+  return Math.max(0, startedAt + Number(game.settings?.duration || DEFAULT_WORD_CHALLENGE_SECONDS) * 1000 - getWordChallengeNow());
+}
+
+function getWordChallengeSubmissions(game = getWordChallengeState()) {
+  return Object.entries(game.submissions || {})
+    .map(([id, submission]) => ({ id, ...submission }))
+    .sort((a, b) => Number(a.submittedAt || 0) - Number(b.submittedAt || 0));
+}
+
+function getMyWordChallengeSubmissions() {
+  return getWordChallengeSubmissions().filter((submission) => submission.participantId === state.studentId);
+}
+
+function getWordChallengeRanking() {
+  const approvedCounts = {};
+  getWordChallengeSubmissions().forEach((submission) => {
+    if (submission.status === "approved") {
+      approvedCounts[submission.participantId] = (approvedCounts[submission.participantId] || 0) + 1;
+    }
+  });
+  return getStudents()
+    .map((student) => ({ ...student, wordScore: approvedCounts[student.id] || 0 }))
+    .sort((a, b) => b.wordScore - a.wordScore || String(a.name).localeCompare(String(b.name), "ko"));
+}
+
+function wordChallengeStatusLabel(status) {
+  return status === "approved" ? "승인" : status === "rejected" ? "반려" : "검토 중";
+}
+
+function wordChallengeStatusClass(status) {
+  return status === "approved" ? "green" : status === "rejected" ? "red" : "gold";
+}
+
+function formatWordChallengeTime(milliseconds) {
+  const seconds = Math.max(0, Math.ceil(Number(milliseconds || 0) / 1000));
+  return `${String(Math.floor(seconds / 60)).padStart(2, "0")}:${String(seconds % 60).padStart(2, "0")}`;
+}
+
+function startWordChallengeTimer({ textSelector, fillSelector, onEnd }) {
+  clearTimer();
+  const textElement = document.querySelector(textSelector);
+  const fillElement = document.querySelector(fillSelector);
+  if (!textElement || !fillElement) return;
+  const durationMs = Number(getWordChallengeState().settings.duration || DEFAULT_WORD_CHALLENGE_SECONDS) * 1000;
+  let ended = false;
+  const tick = () => {
+    const remaining = getWordChallengeRemainingMs();
+    textElement.textContent = formatWordChallengeTime(remaining);
+    fillElement.style.width = `${Math.max(0, Math.min(100, remaining / durationMs * 100))}%`;
+    if (remaining <= 0 && !ended) {
+      ended = true;
+      clearTimer();
+      onEnd?.();
+    }
+  };
+  tick();
+  state.timerId = window.setInterval(tick, 200);
+}
+
+function renderWordChallengeStudentRoute() {
+  const status = state.room?.status || "waiting";
+  if (status === "finished") {
+    renderWordChallengeFinalResult("student-word-final", false, true);
+    return;
+  }
+  if (status === "playing" || status === "result") {
+    renderWordChallengeStudentGame();
+    return;
+  }
+  renderWordChallengeStudentWaiting();
+}
+
+function renderWordChallengeStudentWaiting(force = false) {
+  const game = getWordChallengeState();
+  setView(`student-word-waiting-${game.settings.chosung}-${game.settings.duration}`, `
+    <section class="screen word-challenge-mode">
+      <div class="status-bar">
+        <button class="btn ghost" id="backHomeBtn" type="button">처음으로</button>
+        <span class="pill blue">방 코드 ${escapeHtml(state.roomCode)}</span>
+      </div>
+      <section class="panel word-hero-panel">
+        <p class="eyebrow">초성 단어 챌린지</p>
+        <h1>게임 시작을 기다리고 있습니다.</h1>
+        <p class="lead">${escapeHtml(state.studentName)} 학생으로 입장했습니다.</p>
+      </section>
+      <div class="stats">
+        <div class="stat"><span class="muted">제시 초성</span><span class="num word-stat-value">${escapeHtml(game.settings.chosung || "설정 전")}</span></div>
+        <div class="stat"><span class="muted">제한 시간</span><span class="num">${game.settings.duration}초</span></div>
+        <div class="stat"><span class="muted">참가 학생</span><span class="num">${getStudents().length}명</span></div>
+      </div>
+      <div class="notice info">선생님이 게임을 시작하면 자동으로 이동합니다.</div>
+    </section>
+  `, () => document.querySelector("#backHomeBtn")?.addEventListener("click", renderHome), force);
+}
+
+function renderWordChallengeStudentGame(force = false) {
+  const game = getWordChallengeState();
+  const ownSubmissions = getMyWordChallengeSubmissions();
+  const approvedCount = ownSubmissions.filter((submission) => submission.status === "approved").length;
+  const timeUp = getWordChallengeRemainingMs(game) <= 0 || state.room.status === "result";
+  const ownSignature = ownSubmissions.map((submission) => `${submission.id}:${submission.status}`).join("|");
+  setView(`student-word-${state.room.status}-${game.gameId}-${ownSignature}`, `
+    <section class="screen word-challenge-mode">
+      <div class="status-bar">
+        <span class="pill blue">방 코드 ${escapeHtml(state.roomCode)}</span>
+        <span class="pill ${timeUp ? "red" : "green"}">${timeUp ? "시간 종료" : "도전 중"}</span>
+        <span class="pill gold">인정 단어 ${approvedCount}개</span>
+      </div>
+      <section class="panel word-hero-panel">
+        <p class="eyebrow">제시 초성</p>
+        <div class="word-chosung">${escapeHtml(game.settings.chosung)}</div>
+        <div class="word-clock" id="wordStudentTimer">${formatWordChallengeTime(getWordChallengeRemainingMs(game))}</div>
+        <div class="timer-track"><div class="timer-fill" id="wordStudentTimerFill"></div></div>
+      </section>
+      ${timeUp ? `<div class="notice warn"><strong>제한 시간이 종료되었습니다.</strong> 제출한 단어를 선생님이 검토하고 있습니다.</div>` : `
+        <form id="wordChallengeForm" class="panel word-submit-form">
+          <label for="wordChallengeInput">단어 입력</label>
+          <div class="word-input-row">
+            <input id="wordChallengeInput" maxlength="${MAX_WORD_CHALLENGE_LENGTH}" autocomplete="off" autocapitalize="off" placeholder="단어를 입력하세요" value="${escapeAttr(state.wordChallengeDraft)}" ${state.wordChallengeSubmitting ? "disabled" : ""} />
+            <button class="btn primary" type="submit" ${state.wordChallengeSubmitting ? "disabled" : ""}>제출</button>
+          </div>
+          <p class="muted small">입력한 단어의 초성이 ${escapeHtml(game.settings.chosung)}와 정확히 같아야 합니다.</p>
+        </form>
+      `}
+      <section class="panel">
+        <div class="status-bar"><h2>내 제출 현황</h2><span class="pill blue">${ownSubmissions.length}개 제출</span></div>
+        ${renderMyWordChallengeSubmissions(ownSubmissions)}
+      </section>
+    </section>
+  `, () => {
+    const input = document.querySelector("#wordChallengeInput");
+    input?.addEventListener("input", () => { state.wordChallengeDraft = input.value; });
+    document.querySelector("#wordChallengeForm")?.addEventListener("submit", submitWordChallengeWord);
+    if (!timeUp) {
+      input?.focus();
+      startWordChallengeTimer({
+        textSelector: "#wordStudentTimer",
+        fillSelector: "#wordStudentTimerFill",
+        onEnd: () => renderWordChallengeStudentGame(true)
+      });
+    }
+  }, force);
+}
+
+function renderMyWordChallengeSubmissions(submissions) {
+  if (!submissions.length) return `<div class="empty">아직 제출한 단어가 없습니다.</div>`;
+  return `<div class="word-submission-list">${[...submissions].reverse().map((submission) => `
+    <div class="word-submission-row">
+      <strong>${escapeHtml(submission.originalWord)}</strong>
+      <span class="pill ${wordChallengeStatusClass(submission.status)}">${wordChallengeStatusLabel(submission.status)}</span>
+    </div>
+  `).join("")}</div>`;
+}
+
+function renderWordChallengeTeacherDashboard(force = true) {
+  const game = getWordChallengeState();
+  const status = state.room?.status || "waiting";
+  const submissions = getWordChallengeSubmissions(game);
+  const pending = submissions.filter((submission) => submission.status === "pending");
+  const approved = submissions.filter((submission) => submission.status === "approved");
+  const rejected = submissions.filter((submission) => submission.status === "rejected");
+  const canEdit = status === "waiting";
+  setView(`teacher-word-${status}-${game.gameId}-${submissions.map((item) => `${item.id}:${item.status}`).join("|")}`, `
+    <section class="screen word-challenge-mode">
+      <div class="status-bar">
+        <div><p class="eyebrow">교사 화면</p><h1>초성 단어 챌린지</h1></div>
+        <button class="btn ghost" id="backHomeBtn" type="button">처음으로</button>
+      </div>
+      <section class="panel">
+        <div class="status-bar">
+          <div><p class="muted small">학생들에게 알려 줄 방 코드</p><div class="room-code">${escapeHtml(state.roomCode)}</div></div>
+          <div class="button-row"><span class="pill ${statusPillClass(status)}">${statusLabel(status)}</span><button class="btn ghost" id="copyRoomCodeBtn" type="button">방 코드 복사</button><button class="btn dark" data-action="open-display" type="button">교실 화면 팝업</button></div>
+        </div>
+        <div class="stats">
+          <div class="stat"><span class="muted">전체 제출</span><span class="num">${submissions.length}</span></div>
+          <div class="stat"><span class="muted">검토 대기</span><span class="num">${pending.length}</span></div>
+          <div class="stat"><span class="muted">접속 학생</span><span class="num">${getStudents().filter((student) => student.connected).length}</span></div>
+        </div>
+      </section>
+      <div class="teacher-grid">
+        <aside class="panel">
+          ${renderTeacherModeControls()}
+          <div class="stack">
+            <h2>게임 설정</h2>
+            <div class="field"><label for="wordChosungInput">제시 초성</label><input id="wordChosungInput" maxlength="8" placeholder="예: ㅅㄱ" value="${escapeAttr(game.settings.chosung)}" ${canEdit ? "" : "disabled"} /></div>
+            <div class="field"><label for="wordDurationInput">제한 시간(초)</label><input id="wordDurationInput" type="number" min="${MIN_WORD_CHALLENGE_SECONDS}" max="${MAX_WORD_CHALLENGE_SECONDS}" value="${game.settings.duration}" ${canEdit ? "" : "disabled"} /></div>
+            <div class="button-row word-duration-presets">${[30, 60, 90, 120].map((seconds) => `<button class="btn ghost" data-word-duration="${seconds}" type="button" ${canEdit ? "" : "disabled"}>${seconds}초</button>`).join("")}</div>
+            <button class="btn primary" data-action="word-save-settings" type="button" ${canEdit ? "" : "disabled"}>설정 저장</button>
+          </div>
+          <div class="stack">
+            <h2>진행 조작</h2>
+            <div class="button-row">
+              <button class="btn success" data-action="word-start" type="button" ${canEdit && isValidWordChallengeChosung(game.settings.chosung) && getStudents().length ? "" : "disabled"}>게임 시작</button>
+              <button class="btn warn" data-action="word-review" type="button" ${status === "playing" ? "" : "disabled"}>제출 마감</button>
+              <button class="btn dark" data-action="word-finish" type="button" ${status === "result" ? "" : "disabled"}>최종 결과 보기</button>
+              <button class="btn danger" data-action="reset" type="button">게임 초기화</button>
+              <button class="btn danger" data-action="clear-room" type="button">학생/자료 목록 초기화</button>
+            </div>
+            ${status === "playing" ? `<div class="timer-wrap"><div class="timer-top"><span>남은 시간</span><strong id="wordTeacherTimer">${formatWordChallengeTime(getWordChallengeRemainingMs(game))}</strong></div><div class="timer-track"><div class="timer-fill" id="wordTeacherTimerFill"></div></div></div>` : ""}
+            ${status === "result" && pending.length ? `<div class="notice warn">아직 검토하지 않은 단어가 ${pending.length}개 있습니다.</div>` : ""}
+          </div>
+          <section class="stack"><h2>참가 학생</h2>${renderStudentList(getStudents())}</section>
+        </aside>
+        <div class="screen">
+          <section class="panel"><div class="status-bar"><h2>실시간 순위</h2><span class="pill gold">승인 단어 기준</span></div>${renderWordChallengeRanking()}</section>
+          ${renderWordChallengeReviewGroup("검토 대기", pending, "pending")}
+          ${renderWordChallengeReviewGroup("승인됨", approved, "approved")}
+          ${renderWordChallengeReviewGroup("반려됨", rejected, "rejected")}
+        </div>
+      </div>
+    </section>
+  `, () => {
+    document.querySelector("#backHomeBtn")?.addEventListener("click", renderHome);
+    document.querySelector("#copyRoomCodeBtn")?.addEventListener("click", copyRoomCode);
+    document.querySelectorAll("[data-switch-mode]").forEach((button) => button.addEventListener("click", () => switchRoomMode(button.dataset.switchMode)));
+    document.querySelectorAll("[data-action]").forEach((button) => button.addEventListener("click", () => handleTeacherAction(button.dataset.action)));
+    document.querySelectorAll("[data-word-duration]").forEach((button) => button.addEventListener("click", () => { document.querySelector("#wordDurationInput").value = button.dataset.wordDuration; }));
+    document.querySelectorAll("[data-word-review]").forEach((button) => button.addEventListener("click", () => reviewWordChallengeSubmission(button.dataset.wordSubmission, button.dataset.wordReview)));
+    if (status === "playing") startWordChallengeTimer({ textSelector: "#wordTeacherTimer", fillSelector: "#wordTeacherTimerFill", onEnd: enterWordChallengeReview });
+  }, force);
+}
+
+function renderWordChallengeReviewGroup(title, submissions, groupStatus) {
+  return `<section class="panel word-review-panel ${groupStatus}"><div class="status-bar"><h2>${title}</h2><span class="pill ${wordChallengeStatusClass(groupStatus)}">${submissions.length}개</span></div>${submissions.length ? `<div class="word-review-list">${[...submissions].reverse().map((submission) => `
+    <article class="word-review-row"><div><strong>${escapeHtml(submission.originalWord)}</strong><p class="muted small">${escapeHtml(submission.nickname)}</p></div>${groupStatus === "pending" ? `<div class="button-row"><button class="btn success" data-word-review="approved" data-word-submission="${escapeAttr(submission.id)}" type="button">승인</button><button class="btn danger" data-word-review="rejected" data-word-submission="${escapeAttr(submission.id)}" type="button">반려</button></div>` : `<span class="pill ${wordChallengeStatusClass(groupStatus)}">${wordChallengeStatusLabel(groupStatus)}</span>`}</article>
+  `).join("")}</div>` : `<div class="empty">해당 단어가 없습니다.</div>`}</section>`;
+}
+
+function renderWordChallengeRanking(limit = null) {
+  const ranking = getWordChallengeRanking();
+  const visible = Number.isInteger(limit) ? ranking.slice(0, limit) : ranking;
+  if (!visible.length) return `<div class="empty">참가 학생이 없습니다.</div>`;
+  let lastScore = null;
+  let lastRank = 0;
+  return `<div class="ranking">${visible.map((student, index) => {
+    if (student.wordScore !== lastScore) lastRank = index + 1;
+    lastScore = student.wordScore;
+    return `<div class="ranking-row rank-${lastRank}"><span class="rank-medal">${lastRank}</span><strong>${escapeHtml(student.name)}</strong><span class="score">${student.wordScore}개</span></div>`;
+  }).join("")}</div>`;
+}
+
+function renderWordChallengeDisplay(force = false) {
+  const game = getWordChallengeState();
+  const status = state.room?.status || "waiting";
+  const submissions = getWordChallengeSubmissions(game);
+  const pendingCount = submissions.filter((submission) => submission.status === "pending").length;
+  const approvedCount = submissions.filter((submission) => submission.status === "approved").length;
+  if (status === "finished") {
+    renderDisplayShell(`display-word-finished-${game.gameId}-${approvedCount}`, "초성 단어 챌린지 최종 결과", `제시 초성 ${game.settings.chosung}`, renderWordChallengeFinalBody(), null, force);
+    return;
+  }
+  if (status === "playing") {
+    renderDisplayShell(`display-word-playing-${game.gameId}-${submissions.length}-${approvedCount}`, "초성 단어 챌린지", "제한 시간 안에 단어를 최대한 많이 찾아보세요.", `
+      <section class="panel word-hero-panel"><p class="eyebrow">제시 초성</p><div class="word-chosung">${escapeHtml(game.settings.chosung)}</div><div class="word-clock" id="wordDisplayTimer">${formatWordChallengeTime(getWordChallengeRemainingMs(game))}</div><div class="timer-track"><div class="timer-fill" id="wordDisplayTimerFill"></div></div></section>
+      <div class="stats"><div class="stat"><span class="muted">전체 제출</span><span class="num">${submissions.length}</span></div><div class="stat"><span class="muted">승인</span><span class="num">${approvedCount}</span></div><div class="stat"><span class="muted">참가 학생</span><span class="num">${getStudents().length}</span></div></div>
+      <section class="panel"><h2>실시간 순위</h2>${renderWordChallengeRanking(8)}</section>
+    `, () => startWordChallengeTimer({ textSelector: "#wordDisplayTimer", fillSelector: "#wordDisplayTimerFill", onEnd: () => renderWordChallengeDisplay(true) }), force);
+    return;
+  }
+  if (status === "result") {
+    renderDisplayShell(`display-word-reviewing-${game.gameId}-${pendingCount}-${approvedCount}`, "단어 검토 중", `제시 초성 ${game.settings.chosung}`, `<section class="panel result-panel"><h1>선생님이 제출 단어를 확인하고 있습니다.</h1><div class="stats"><div class="stat"><span class="muted">승인</span><span class="num">${approvedCount}</span></div><div class="stat"><span class="muted">검토 대기</span><span class="num">${pendingCount}</span></div><div class="stat"><span class="muted">전체 제출</span><span class="num">${submissions.length}</span></div></div></section><section class="panel"><h2>현재 순위</h2>${renderWordChallengeRanking(8)}</section>`, null, force);
+    return;
+  }
+  renderDisplayShell(`display-word-waiting-${game.settings.chosung}-${game.settings.duration}-${getStudents().length}`, "초성 단어 챌린지", "학생 입장을 기다리고 있습니다.", `<section class="panel result-panel"><p class="eyebrow">제시 초성</p><h1>${escapeHtml(game.settings.chosung || "설정 전")}</h1><div class="stats"><div class="stat"><span class="muted">제한 시간</span><span class="num">${game.settings.duration}초</span></div><div class="stat"><span class="muted">참가 학생</span><span class="num">${getStudents().length}명</span></div><div class="stat"><span class="muted">접속 학생</span><span class="num">${getStudents().filter((student) => student.connected).length}명</span></div></div></section>`, null, force);
+}
+
+function renderWordChallengeFinalBody() {
+  const approved = getWordChallengeSubmissions().filter((submission) => submission.status === "approved").sort((a, b) => String(a.originalWord).localeCompare(String(b.originalWord), "ko"));
+  return `<section class="panel word-hero-panel result-panel"><p class="eyebrow">제시 초성 ${escapeHtml(getWordChallengeState().settings.chosung)}</p><h1>총 ${approved.length}개의 단어를 찾았습니다.</h1></section><section class="panel"><h2>최종 순위</h2>${renderWordChallengeRanking()}</section><section class="panel"><h2>승인된 전체 단어</h2>${approved.length ? `<div class="word-approved-grid">${approved.map((submission) => `<div class="word-approved-item"><strong>${escapeHtml(submission.originalWord)}</strong><span>${escapeHtml(submission.nickname)}</span></div>`).join("")}</div>` : `<div class="empty">승인된 단어가 없습니다.</div>`}</section>`;
+}
+
+function renderWordChallengeFinalResult(viewName, showTeacherControls, force = false) {
+  setView(viewName, `<section class="screen word-challenge-mode"><div class="status-bar"><div><p class="eyebrow">초성 단어 챌린지 종료</p><h1>최종 결과</h1></div><span class="pill gold">게임 완료</span></div>${renderWordChallengeFinalBody()}${showTeacherControls ? `<div class="button-row"><button class="btn success" data-action="word-restart" type="button">같은 참가자로 새 초성 게임</button><button class="btn danger" data-action="clear-room" type="button">학생/자료 목록 초기화</button><button class="btn ghost" id="backHomeBtn" type="button">방 나가기</button></div>` : `<div class="notice info">선생님이 다음 게임을 준비할 때까지 기다려 주세요.</div>`}</section>`, () => {
+    document.querySelectorAll("[data-action]").forEach((button) => button.addEventListener("click", () => handleTeacherAction(button.dataset.action)));
+    document.querySelector("#backHomeBtn")?.addEventListener("click", renderHome);
+  }, force);
+}
+
+async function saveWordChallengeSettings() {
+  if ((state.room?.status || "waiting") !== "waiting") return showToast("게임 시작 전 대기 상태에서만 설정할 수 있습니다.", "error");
+  const chosung = normalizeWordChallengeChosung(document.querySelector("#wordChosungInput")?.value || "");
+  const durationValue = Number(document.querySelector("#wordDurationInput")?.value);
+  if (!isValidWordChallengeChosung(chosung)) return showToast("초성만 입력해 주세요. 예: ㅅㄱ", "error");
+  if (!Number.isInteger(durationValue) || durationValue < MIN_WORD_CHALLENGE_SECONDS || durationValue > MAX_WORD_CHALLENGE_SECONDS) return showToast(`제한 시간은 ${MIN_WORD_CHALLENGE_SECONDS}초부터 ${MAX_WORD_CHALLENGE_SECONDS}초까지 입력해 주세요.`, "error");
+  try {
+    await update(ref(db, `rooms/${state.roomCode}/wordChallenge/settings`), { chosung, duration: durationValue });
+    showToast("초성과 제한 시간을 저장했습니다.", "success");
+  } catch (error) {
+    console.error(error);
+    showToast("설정을 저장하지 못했습니다.", "error");
+  }
+}
+
+async function startWordChallenge() {
+  const settings = getWordChallengeState().settings;
+  if (!isValidWordChallengeChosung(settings.chosung)) return showToast("초성을 저장한 뒤 시작해 주세요.", "error");
+  if (!getStudents().length) return showToast("참가 학생이 한 명 이상 필요합니다.", "error");
+  openDisplayWindow();
+  try {
+    await update(roomRef(state.roomCode), {
+      status: "playing",
+      wordChallenge: {
+        ...getInitialWordChallengeStateForWrite(settings),
+        gameId: `word_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
+        startedAt: serverTimestamp()
+      }
+    });
+    showToast("초성 단어 챌린지를 시작했습니다.", "success");
+  } catch (error) {
+    console.error(error);
+    showToast("게임을 시작하지 못했습니다.", "error");
+  }
+}
+
+async function submitWordChallengeWord(event) {
+  event.preventDefault();
+  if (state.wordChallengeSubmitting) return;
+  const game = getWordChallengeState();
+  const word = normalizeWordChallengeWord(document.querySelector("#wordChallengeInput")?.value || state.wordChallengeDraft);
+  if (!word) return showToast("단어를 입력해 주세요.", "error");
+  if (word.length > MAX_WORD_CHALLENGE_LENGTH || !/^[가-힣]+$/.test(word)) return showToast("한글 음절로 된 단어만 입력해 주세요.", "error");
+  if (extractWordChosung(word) !== normalizeWordChallengeChosung(game.settings.chosung)) return showToast("제시된 초성과 일치하지 않습니다.", "error");
+  if ((state.room?.status || "waiting") !== "playing" || getWordChallengeRemainingMs(game) <= 0) return showToast("제한 시간이 종료되었습니다.", "error");
+  const submissionId = `word_${state.studentId}_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
+  const submittedAt = getWordChallengeNow();
+  state.wordChallengeSubmitting = true;
+  try {
+    const result = await runTransaction(ref(db, `rooms/${state.roomCode}/wordChallenge`), (current) => {
+      if (!current || current.gameId !== game.gameId || !current.startedAt) return;
+      const endAt = Number(current.startedAt) + Number(current.settings?.duration || DEFAULT_WORD_CHALLENGE_SECONDS) * 1000;
+      if (getWordChallengeNow() >= endAt) return;
+      current.claims = current.claims || {};
+      if (current.claims[word]) return;
+      current.submissions = current.submissions || {};
+      current.submissions[submissionId] = { participantId: state.studentId, nickname: state.studentName, originalWord: word, normalizedWord: word, status: "pending", submittedAt };
+      current.claims[word] = { submissionId, participantId: state.studentId, status: "pending", claimedAt: submittedAt };
+      return current;
+    });
+    if (!result.committed) {
+      const latest = result.snapshot.val() || {};
+      showToast(latest.claims?.[word] ? "이미 제출한 단어입니다." : "제한 시간이 종료되었습니다.", "error");
+      return;
+    }
+    state.wordChallengeDraft = "";
+    showToast("단어를 제출했습니다. 선생님 검토를 기다려 주세요.", "success");
+  } catch (error) {
+    console.error(error);
+    showToast("제출하지 못했습니다. 다시 시도해 주세요.", "error");
+  } finally {
+    state.wordChallengeSubmitting = false;
+  }
+}
+
+async function reviewWordChallengeSubmission(submissionId, nextStatus) {
+  if (state.role !== "teacher" || !["approved", "rejected"].includes(nextStatus) || state.wordChallengeReviewing) return;
+  state.wordChallengeReviewing = true;
+  try {
+    const result = await runTransaction(ref(db, `rooms/${state.roomCode}/wordChallenge`), (current) => {
+      const submission = current?.submissions?.[submissionId];
+      if (!submission || submission.status !== "pending") return;
+      submission.status = nextStatus;
+      submission.reviewedAt = getWordChallengeNow();
+      current.claims = current.claims || {};
+      if (nextStatus === "approved") {
+        current.claims[submission.normalizedWord] = { submissionId, participantId: submission.participantId, status: "approved", claimedAt: Number(current.claims[submission.normalizedWord]?.claimedAt || submission.submittedAt) };
+      } else if (current.claims[submission.normalizedWord]?.submissionId === submissionId) {
+        delete current.claims[submission.normalizedWord];
+      }
+      return current;
+    });
+    showToast(result.committed ? (nextStatus === "approved" ? "단어를 승인했습니다." : "단어를 반려하고 선점을 해제했습니다.") : "이미 처리된 단어입니다.", result.committed ? "success" : "error");
+  } catch (error) {
+    console.error(error);
+    showToast("단어를 처리하지 못했습니다.", "error");
+  } finally {
+    state.wordChallengeReviewing = false;
+  }
+}
+
+async function enterWordChallengeReview() {
+  if (state.role !== "teacher" || (state.room?.status || "waiting") !== "playing") return;
+  try {
+    await update(roomRef(state.roomCode), { status: "result", "wordChallenge/endedAt": serverTimestamp() });
+    showToast("제출을 마감했습니다. 남은 단어를 검토해 주세요.", "success");
+  } catch (error) {
+    console.error(error);
+    showToast("제출을 마감하지 못했습니다.", "error");
+  }
+}
+
+async function finishWordChallenge() {
+  const pendingCount = getWordChallengeSubmissions().filter((submission) => submission.status === "pending").length;
+  if (pendingCount) return showToast(`아직 검토하지 않은 단어가 ${pendingCount}개 있습니다.`, "error");
+  try {
+    await update(roomRef(state.roomCode), { status: "finished", finishedAt: serverTimestamp(), "wordChallenge/finishedAt": serverTimestamp() });
+    showToast("최종 결과를 공개했습니다.", "success");
+  } catch (error) {
+    console.error(error);
+    showToast("최종 결과를 열지 못했습니다.", "error");
+  }
+}
+
+async function resetWordChallengeWithStudents() {
+  if (!window.confirm("참가 학생은 유지하고 새 초성 게임을 준비할까요?")) return;
+  try {
+    await update(roomRef(state.roomCode), { status: "waiting", finishedAt: null, wordChallenge: getWordChallengeResetState(true) });
+    showToast("같은 참가자로 새 게임을 준비했습니다.", "success");
+  } catch (error) {
+    console.error(error);
+    showToast("새 게임을 준비하지 못했습니다.", "error");
+  }
 }
 
 // =========================
@@ -6755,7 +7828,8 @@ async function enterTeacher() {
     const snapshot = await get(roomRef(code));
     if (!snapshot.exists()) {
       await set(roomRef(code), {
-        mode: selectedMode,
+        mode: selectedMode === "word" ? "quiz" : selectedMode,
+        gameVariant: selectedMode === "word" ? "word" : null,
         status: "waiting",
         currentQuestionIndex: -1,
         currentComplimentIndex: -1,
@@ -6772,14 +7846,17 @@ async function enterTeacher() {
         liar: selectedMode === "liar" ? getInitialLiarStateForWrite() : null,
         catchmind: selectedMode === "catchmind" ? getInitialCatchmindStateForWrite() : null,
         seatGame: selectedMode === "seat" ? getInitialSeatGameStateForWrite() : null,
-        memoryBattle: selectedMode === "memory" ? getInitialMemoryBattleStateForWrite() : null
+        memoryBattle: selectedMode === "memory" ? getInitialMemoryBattleStateForWrite() : null,
+        bingo: selectedMode === "bingo" ? getInitialBingoStateForWrite() : null,
+        wordChallenge: selectedMode === "word" ? getInitialWordChallengeStateForWrite() : null
       });
     } else {
       const room = snapshot.val();
-      const roomMode = room.mode || "quiz";
+      const roomMode = room.gameVariant === "word" ? "word" : (room.mode || "quiz");
       if ((room.status || "waiting") === "waiting" && roomMode !== selectedMode) {
         await update(roomRef(code), {
-          mode: selectedMode,
+          mode: selectedMode === "word" ? "quiz" : selectedMode,
+          gameVariant: selectedMode === "word" ? "word" : null,
           currentQuestionIndex: -1,
           currentComplimentIndex: -1,
           currentClueIndex: 0,
@@ -6790,6 +7867,8 @@ async function enterTeacher() {
           catchmind: selectedMode === "catchmind" ? getInitialCatchmindStateForWrite() : null,
           seatGame: selectedMode === "seat" ? getInitialSeatGameStateForWrite() : null,
           memoryBattle: selectedMode === "memory" ? getInitialMemoryBattleStateForWrite() : null,
+          bingo: selectedMode === "bingo" ? getInitialBingoStateForWrite() : null,
+          wordChallenge: selectedMode === "word" ? getInitialWordChallengeStateForWrite() : null,
           answers: null,
           complimentAnswers: null,
           complimentBonuses: null
@@ -6814,9 +7893,11 @@ async function submitQuestion(event) {
 
   const name = cleanText(document.querySelector("#authorName").value);
   const question = cleanText(document.querySelector("#questionText").value);
-  const choices = [0, 1, 2, 3].map((index) => cleanText(document.querySelector(`#choice${index}`).value));
+  const questionType = document.querySelector("input[name='questionType']:checked")?.value === "short" ? "short" : "choice";
+  const choices = [0, 1, 2, 3].map((index) => cleanText(document.querySelector(`#choice${index}`)?.value || ""));
   const correctInput = document.querySelector("input[name='correctIndex']:checked");
   const correctIndex = correctInput ? Number(correctInput.value) : -1;
+  const correctAnswer = cleanText(document.querySelector("#correctAnswer")?.value || "");
   const editingQuestionId = cleanText(document.querySelector("#editingQuestionId")?.value || "");
 
   if (!name) {
@@ -6829,13 +7910,18 @@ async function submitQuestion(event) {
     return;
   }
 
-  if (choices.some((choice) => !choice)) {
+  if (questionType === "choice" && choices.some((choice) => !choice)) {
     showToast("선택지 4개를 모두 입력해 주세요.", "error");
     return;
   }
 
-  if (!Number.isInteger(correctIndex) || correctIndex < 0 || correctIndex > 3) {
+  if (questionType === "choice" && (!Number.isInteger(correctIndex) || correctIndex < 0 || correctIndex > 3)) {
     showToast("정답 번호를 1~4 중에서 선택해 주세요.", "error");
+    return;
+  }
+
+  if (questionType === "short" && !correctAnswer) {
+    showToast("주관식 정답을 입력해 주세요.", "error");
     return;
   }
 
@@ -6872,15 +7958,21 @@ async function submitQuestion(event) {
       lastSeen: serverTimestamp()
     });
 
-    await set(questionPath, {
+    const questionData = {
       authorName: name,
       authorKey,
       question,
-      choices,
-      correctIndex,
+      type: questionType,
       createdAt: existing?.createdAt || serverTimestamp(),
       updatedAt: serverTimestamp()
-    });
+    };
+    if (questionType === "short") {
+      questionData.correctAnswer = correctAnswer;
+    } else {
+      questionData.choices = choices;
+      questionData.correctIndex = correctIndex;
+    }
+    await set(questionPath, questionData);
 
     showToast("문제가 제출되었습니다.", "success");
     renderStudentWaiting(true);
@@ -7079,7 +8171,7 @@ async function submitMafiaVote(selectedStudentId) {
   }
 }
 
-async function submitAnswer(selectedIndex) {
+async function submitAnswer(selectedIndex, textAnswer = "") {
   if (state.answering) {
     return;
   }
@@ -7088,6 +8180,17 @@ async function submitAnswer(selectedIndex) {
   const question = questions[Number(state.room.currentQuestionIndex || 0)];
   if (!question || state.room.status !== "playing") {
     showToast("지금은 답을 제출할 수 없습니다.", "error");
+    return;
+  }
+
+  const questionType = getQuestionType(question);
+  const submittedText = cleanText(textAnswer);
+  if (questionType === "short" && !submittedText) {
+    showToast("주관식 정답을 입력해 주세요.", "error");
+    return;
+  }
+  if (questionType === "choice" && (!Number.isInteger(selectedIndex) || selectedIndex < 0 || selectedIndex > 3)) {
+    showToast("선택지를 골라 주세요.", "error");
     return;
   }
 
@@ -7109,19 +8212,26 @@ async function submitAnswer(selectedIndex) {
   }
 
   const isOwnBlocked = !ALLOW_SOLVE_OWN_QUESTION && question.authorKey === nameToKey(state.studentName);
-  const isCorrect = !isOwnBlocked && selectedIndex === question.correctIndex;
+  const isCorrect = !isOwnBlocked && (questionType === "short"
+    ? normalizeShortAnswer(submittedText) === normalizeShortAnswer(question.correctAnswer)
+    : selectedIndex === question.correctIndex);
   const scoreEarned = isCorrect
     ? Math.round(500 + (remainingSeconds / timeLimit) * 500)
     : 0;
 
   const answerData = {
     name: state.studentName,
-    selectedIndex,
+    answerType: questionType,
     isCorrect,
     responseTime: Math.round((elapsedMs / 1000) * 10) / 10,
     scoreEarned,
     answeredAt: serverTimestamp()
   };
+  if (questionType === "short") {
+    answerData.textAnswer = submittedText;
+  } else {
+    answerData.selectedIndex = selectedIndex;
+  }
 
   state.answering = true;
   try {
@@ -7133,7 +8243,8 @@ async function submitAnswer(selectedIndex) {
         });
       }
       showToast(isCorrect ? `${scoreEarned}점을 얻었습니다!` : "답변이 제출되었습니다.", isCorrect ? "success" : "");
-      renderStudentQuiz(true);
+      state.quizShortAnswerDraft = "";
+      renderStudentQuiz(false);
     } else {
       showToast("이미 제출한 문제입니다.", "error");
     }
@@ -7331,7 +8442,19 @@ function handleTeacherAction(action) {
     "memory-restart-same": restartMemoryGameWithSameImages,
     "memory-new-images": configureMemoryGameWithNewImages,
     "memory-toggle-records": toggleMemoryRecords,
-    "memory-clear-records": clearSelectedMemoryRecords
+    "memory-clear-records": clearSelectedMemoryRecords,
+    "bingo-save-settings": saveBingoSettings,
+    "bingo-start": startBingoGame,
+    "bingo-approve-call": approveBingoCall,
+    "bingo-reject-call": rejectBingoCall,
+    "bingo-next-turn": () => nextBingoTurn(),
+    "bingo-skip-turn": () => nextBingoTurn({ skip: true }),
+    "bingo-finish": finishBingoGame,
+    "word-save-settings": saveWordChallengeSettings,
+    "word-start": startWordChallenge,
+    "word-review": enterWordChallengeReview,
+    "word-finish": finishWordChallenge,
+    "word-restart": resetWordChallengeWithStudents
   };
   actions[action]?.();
 }
@@ -8183,6 +9306,8 @@ async function resetGame() {
     catchmind: getInitialCatchmindStateForWrite(),
     seatGame: getInitialSeatGameStateForWrite(),
     memoryBattle: getInitialMemoryBattleStateForWrite(),
+    bingo: getBingoResetStatePreservingBoards(),
+    wordChallenge: getWordChallengeResetState(true),
     answers: null
   };
 
@@ -8206,7 +9331,7 @@ async function resetGame() {
 }
 
 async function clearRoomLists() {
-  const ok = window.confirm("학생 목록, 문제/칭찬 자료, 답변, 점수를 모두 지울까요? 이 작업은 되돌릴 수 없습니다.");
+  const ok = window.confirm("학생 목록, 문제/칭찬/빙고 자료, 답변, 점수를 모두 지울까요? 이 작업은 되돌릴 수 없습니다.");
   if (!ok) {
     return;
   }
@@ -8243,6 +9368,8 @@ async function clearRoomLists() {
       catchmind: getInitialCatchmindStateForWrite(),
       seatGame: getInitialSeatGameStateForWrite(),
       memoryBattle: getInitialMemoryBattleStateForWrite(),
+      bingo: getInitialBingoStateForWrite(),
+      wordChallenge: getInitialWordChallengeStateForWrite(),
       answers: null,
       complimentAnswers: null
     });
@@ -8375,6 +9502,10 @@ function subscribeToRoom(code) {
           renderSeatFinalResult("teacher-seat-final", true, true);
         } else if (getRoomMode() === "memory") {
           renderMemoryFinalResult("teacher-memory-final", true, true);
+        } else if (getRoomMode() === "bingo") {
+          renderBingoFinalResult("teacher-bingo-final", true, true);
+        } else if (getRoomMode() === "word") {
+          renderWordChallengeFinalResult("teacher-word-final", true, true);
         } else {
           renderFinalResult("teacher-final", true, true);
         }
@@ -8402,7 +9533,7 @@ function roomRef(code) {
 }
 
 function getRoomMode() {
-  return state.room?.mode || "quiz";
+  return state.room?.gameVariant === "word" ? "word" : (state.room?.mode || "quiz");
 }
 
 function getSelectedTeacherMode() {
@@ -8410,7 +9541,7 @@ function getSelectedTeacherMode() {
 }
 
 async function switchRoomMode(nextMode) {
-  if (!["quiz", "compliment", "mafia", "liar", "catchmind", "seat", "memory"].includes(nextMode)) {
+  if (!["quiz", "compliment", "mafia", "liar", "catchmind", "seat", "memory", "bingo", "word"].includes(nextMode)) {
     return;
   }
 
@@ -8430,7 +9561,8 @@ async function switchRoomMode(nextMode) {
     clearMemoryImageDraft();
     state.memorySettingsDraft = null;
     await update(roomRef(state.roomCode), {
-      mode: nextMode,
+      mode: nextMode === "word" ? "quiz" : nextMode,
+      gameVariant: nextMode === "word" ? "word" : null,
       currentQuestionIndex: -1,
       currentComplimentIndex: -1,
       currentClueIndex: 0,
@@ -8441,6 +9573,8 @@ async function switchRoomMode(nextMode) {
       catchmind: nextMode === "catchmind" ? getInitialCatchmindStateForWrite() : null,
       seatGame: nextMode === "seat" ? getInitialSeatGameStateForWrite() : null,
       memoryBattle: nextMode === "memory" ? getInitialMemoryBattleStateForWrite() : null,
+      bingo: nextMode === "bingo" ? getInitialBingoStateForWrite() : null,
+      wordChallenge: nextMode === "word" ? getInitialWordChallengeStateForWrite() : null,
       answers: null,
       complimentAnswers: null,
       complimentBonuses: null
@@ -8458,8 +9592,10 @@ function getQuestions() {
     .map(([id, value]) => ({
       id,
       ...value,
+      type: value.type === "short" ? "short" : "choice",
       choices: normalizeChoices(value.choices),
-      correctIndex: Number(value.correctIndex)
+      correctIndex: Number(value.correctIndex),
+      correctAnswer: cleanText(value.correctAnswer || "")
     }))
     .sort((a, b) => {
       const createdA = Number(a.createdAt || 0);
@@ -9878,7 +11014,9 @@ function modeLabel(mode) {
     liar: "라이어게임",
     catchmind: "캐치마인드",
     seat: "자리바꾸기 게임",
-    memory: "메모리 배틀"
+    memory: "메모리 배틀",
+    bingo: "개념 빙고",
+    word: "초성 단어 챌린지"
   };
   return labels[mode] || "퀴즈 배틀";
 }
@@ -10341,6 +11479,8 @@ function renderTeacherModeControls() {
         <button class="btn ${mode === "catchmind" ? "primary" : "ghost"}" data-switch-mode="catchmind" type="button" ${canSwitch ? "" : "disabled"}>캐치마인드</button>
         <button class="btn ${mode === "seat" ? "primary" : "ghost"}" data-switch-mode="seat" type="button" ${canSwitch ? "" : "disabled"}>자리바꾸기</button>
         <button class="btn ${mode === "memory" ? "primary" : "ghost"}" data-switch-mode="memory" type="button" ${canSwitch ? "" : "disabled"}>메모리 배틀</button>
+        <button class="btn ${mode === "bingo" ? "primary" : "ghost"}" data-switch-mode="bingo" type="button" ${canSwitch ? "" : "disabled"}>개념 빙고</button>
+        <button class="btn ${mode === "word" ? "primary" : "ghost"}" data-switch-mode="word" type="button" ${canSwitch ? "" : "disabled"}>초성 단어</button>
       </div>
       ${canSwitch ? "" : `<p class="muted small">게임 진행 중에는 모드를 바꿀 수 없습니다.</p>`}
     </section>
@@ -10661,6 +11801,7 @@ function renderTeacherCurrentQuestion(question, currentIndex, total, status) {
   }
 
   const choices = normalizeChoices(question.choices);
+  const questionType = getQuestionType(question);
   return `
     <div class="question-card">
       <div class="status-bar">
@@ -10668,7 +11809,7 @@ function renderTeacherCurrentQuestion(question, currentIndex, total, status) {
         <span class="pill ${statusPillClass(status)}">${statusLabel(status)}</span>
       </div>
       <h2>${escapeHtml(question.question)}</h2>
-      <p class="muted">출제자: ${escapeHtml(question.authorName || "익명")}</p>
+      <p class="muted">출제자: ${escapeHtml(question.authorName || "익명")} · ${questionType === "short" ? "주관식" : "4지선다"}</p>
       ${status === "playing" ? `
         <div class="timer-wrap">
           <div class="timer-top">
@@ -10678,19 +11819,25 @@ function renderTeacherCurrentQuestion(question, currentIndex, total, status) {
           <div class="timer-track"><div id="teacherTimerFill" class="timer-fill"></div></div>
         </div>
       ` : ""}
-      <ol class="list">
-        ${choices.map((choice, index) => `
-          <li class="list-row">
-            <strong>${index + 1}. ${escapeHtml(choice)}</strong>
-            ${status !== "playing" && index === question.correctIndex ? `<span class="pill green">정답</span>` : ""}
-          </li>
-        `).join("")}
-      </ol>
+      ${questionType === "short" ? `
+        <div class="notice ${status === "playing" ? "info" : "success"}">
+          ${status === "playing" ? "학생들이 주관식 답을 입력하고 있습니다." : `정답: <strong>${escapeHtml(question.correctAnswer)}</strong>`}
+        </div>
+      ` : `
+        <ol class="list">
+          ${choices.map((choice, index) => `
+            <li class="list-row">
+              <strong>${index + 1}. ${escapeHtml(choice)}</strong>
+              ${status !== "playing" && index === question.correctIndex ? `<span class="pill green">정답</span>` : ""}
+            </li>
+          `).join("")}
+        </ol>
+      `}
       ${status === "result" ? `
         <div class="grid-2">
           <div>
-            <h3>선택지별 응답 수</h3>
-            ${renderAnswerBars(question)}
+            <h3>${questionType === "short" ? "주관식 응답" : "선택지별 응답 수"}</h3>
+            ${renderQuestionResponseSummary(question)}
           </div>
           <div>
             <h3>이번 문제 랭킹</h3>
@@ -10712,9 +11859,9 @@ function renderTeacherQuestionList(questions, status) {
       ${questions.map((question, index) => `
         <li class="list-row split">
           <button class="question-list-preview" data-view-question="${escapeAttr(question.id)}" type="button">
-            <p class="muted small">${index + 1}. ${escapeHtml(question.authorName || "익명")}</p>
+            <p class="muted small">${index + 1}. ${escapeHtml(question.authorName || "익명")} · ${getQuestionType(question) === "short" ? "주관식" : "4지선다"}</p>
             <strong>${escapeHtml(question.question)}</strong>
-            <p class="muted small">정답: ${question.correctIndex + 1}. ${escapeHtml(normalizeChoices(question.choices)[question.correctIndex] || "")}</p>
+            <p class="muted small">정답: ${getQuestionType(question) === "short" ? escapeHtml(question.correctAnswer) : `${question.correctIndex + 1}. ${escapeHtml(normalizeChoices(question.choices)[question.correctIndex] || "")}`}</p>
             <span class="muted small">클릭해서 전체 보기</span>
           </button>
           <button class="btn danger" data-delete-question="${escapeAttr(question.id)}" type="button" ${status === "waiting" ? "" : "disabled"}>삭제</button>
@@ -10749,14 +11896,18 @@ function showTeacherQuestionDetail(questionId) {
             <p class="muted small">문제</p>
             <h3>${escapeHtml(question.question)}</h3>
           </div>
-          <ol class="list">
-            ${choices.map((choice, index) => `
-              <li class="list-row split">
-                <strong>${index + 1}. ${escapeHtml(choice)}</strong>
-                ${index === question.correctIndex ? `<span class="pill green">정답</span>` : ""}
-              </li>
-            `).join("")}
-          </ol>
+          ${getQuestionType(question) === "short" ? `
+            <div class="notice success"><strong>주관식 정답: ${escapeHtml(question.correctAnswer)}</strong></div>
+          ` : `
+            <ol class="list">
+              ${choices.map((choice, index) => `
+                <li class="list-row split">
+                  <strong>${index + 1}. ${escapeHtml(choice)}</strong>
+                  ${index === question.correctIndex ? `<span class="pill green">정답</span>` : ""}
+                </li>
+              `).join("")}
+            </ol>
+          `}
         </div>
       </section>
     </div>
@@ -10815,6 +11966,32 @@ function renderAnswerBars(question) {
       }).join("")}
     </div>
   `;
+}
+
+function renderQuestionResponseSummary(question) {
+  if (getQuestionType(question) === "choice") {
+    return renderAnswerBars(question);
+  }
+  const answers = getAnswers(question.id).filter((answer) => !answer.isSkipped && cleanText(answer.textAnswer || ""));
+  if (!answers.length) {
+    return `<div class="empty">제출된 주관식 응답이 없습니다.</div>`;
+  }
+  const groups = new Map();
+  answers.forEach((answer) => {
+    const text = cleanText(answer.textAnswer);
+    const key = normalizeShortAnswer(text);
+    const current = groups.get(key) || { text, count: 0, isCorrect: false };
+    current.count += 1;
+    current.isCorrect = current.isCorrect || Boolean(answer.isCorrect);
+    groups.set(key, current);
+  });
+  const rows = [...groups.values()].sort((a, b) => b.count - a.count || String(a.text).localeCompare(String(b.text), "ko"));
+  return `<ul class="list">${rows.map((row) => `
+    <li class="list-row split">
+      <strong>${escapeHtml(row.text)}</strong>
+      <span><span class="pill ${row.isCorrect ? "green" : ""}">${row.isCorrect ? "정답" : "응답"}</span> ${row.count}명</span>
+    </li>
+  `).join("")}</ul>`;
 }
 
 function renderRanking(rows, scoreField = "score") {
@@ -10943,6 +12120,41 @@ function cleanText(value) {
   return String(value || "").replace(/\s+/g, " ").trim();
 }
 
+function getQuestionType(question) {
+  return question?.type === "short" ? "short" : "choice";
+}
+
+function normalizeShortAnswer(value) {
+  return String(value || "")
+    .normalize("NFKC")
+    .toLocaleLowerCase("ko-KR")
+    .replace(/\s+/g, "")
+    .trim();
+}
+
+function getQuestionCorrectAnswerText(question) {
+  if (getQuestionType(question) === "short") {
+    return cleanText(question?.correctAnswer || "");
+  }
+  return normalizeChoices(question?.choices)[Number(question?.correctIndex)] || "";
+}
+
+function setupQuestionTypeFields() {
+  const choiceFields = document.querySelector("#choiceQuestionFields");
+  const shortFields = document.querySelector("#shortQuestionFields");
+  const correctAnswer = document.querySelector("#correctAnswer");
+  const choiceInputs = [0, 1, 2, 3].map((index) => document.querySelector(`#choice${index}`)).filter(Boolean);
+  const sync = () => {
+    const type = document.querySelector("input[name='questionType']:checked")?.value === "short" ? "short" : "choice";
+    if (choiceFields) choiceFields.hidden = type !== "choice";
+    if (shortFields) shortFields.hidden = type !== "short";
+    choiceInputs.forEach((input) => { input.required = type === "choice"; });
+    if (correctAnswer) correctAnswer.required = type === "short";
+  };
+  document.querySelectorAll("input[name='questionType']").forEach((input) => input.addEventListener("change", sync));
+  sync();
+}
+
 function normalizeChoices(choices = []) {
   return [0, 1, 2, 3].map((index) => String(choices?.[index] || ""));
 }
@@ -11008,6 +12220,9 @@ function saveStudentSession() {
 }
 
 function statusLabel(status) {
+  if (status === "result" && getRoomMode() === "word") {
+    return "단어 검토 중";
+  }
   const labels = {
     waiting: "대기 중",
     ready: "라운드 준비",
@@ -11019,6 +12234,8 @@ function statusLabel(status) {
     memoryCountdown: "카드 위치 공개",
     memoryPlaying: "메모리 배틀 진행",
     memoryAwaitingResults: "결과 공개 준비",
+    bingoPlaying: "개념 빙고 진행",
+    reviewing: "단어 검토 중",
     playing: "진행 중",
     result: "결과 공개",
     targetReveal: "칭찬 대상 공개",
@@ -11049,6 +12266,8 @@ function statusPillClass(status) {
     memoryCountdown: "gold",
     memoryPlaying: "green",
     memoryAwaitingResults: "gold",
+    bingoPlaying: "green",
+    reviewing: "gold",
     playing: "green",
     result: "gold",
     targetReveal: "gold",
