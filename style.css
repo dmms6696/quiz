@@ -2089,7 +2089,9 @@ button.seat-tile:disabled {
 .word-review-list {
   max-height: 520px;
   overflow: auto;
+  overflow-anchor: none;
   overscroll-behavior: contain;
+  scrollbar-gutter: stable;
 }
 
 .word-submission-row,

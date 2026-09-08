@@ -7493,6 +7493,7 @@ function renderWordChallengeTeacherDashboard(force = true) {
   const approved = submissions.filter((submission) => submission.status === "approved");
   const rejected = submissions.filter((submission) => submission.status === "rejected");
   const canEdit = status === "waiting";
+  const reviewScrollState = captureWordChallengeReviewScroll();
   setView(`teacher-word-${status}-${game.gameId}-${submissions.map((item) => `${item.id}:${item.status}`).join("|")}`, `
     <section class="screen word-challenge-mode">
       <div class="status-bar">
@@ -7548,15 +7549,57 @@ function renderWordChallengeTeacherDashboard(force = true) {
     document.querySelectorAll("[data-switch-mode]").forEach((button) => button.addEventListener("click", () => switchRoomMode(button.dataset.switchMode)));
     document.querySelectorAll("[data-action]").forEach((button) => button.addEventListener("click", () => handleTeacherAction(button.dataset.action)));
     document.querySelectorAll("[data-word-duration]").forEach((button) => button.addEventListener("click", () => { document.querySelector("#wordDurationInput").value = button.dataset.wordDuration; }));
-    document.querySelectorAll("[data-word-review]").forEach((button) => button.addEventListener("click", () => reviewWordChallengeSubmission(button.dataset.wordSubmission, button.dataset.wordReview)));
+    document.querySelectorAll("[data-word-review]").forEach((button) => button.addEventListener("click", () => {
+      setWordChallengeReviewButtonsDisabled(true);
+      reviewWordChallengeSubmission(button.dataset.wordSubmission, button.dataset.wordReview);
+    }));
     if (status === "playing") startWordChallengeTimer({ textSelector: "#wordTeacherTimer", fillSelector: "#wordTeacherTimerFill", onEnd: enterWordChallengeReview });
+    restoreWordChallengeReviewScroll(reviewScrollState);
   }, force);
 }
 
 function renderWordChallengeReviewGroup(title, submissions, groupStatus) {
-  return `<section class="panel word-review-panel ${groupStatus}"><div class="status-bar"><h2>${title}</h2><span class="pill ${wordChallengeStatusClass(groupStatus)}">${submissions.length}개</span></div>${submissions.length ? `<div class="word-review-list">${[...submissions].reverse().map((submission) => `
-    <article class="word-review-row"><div><strong>${escapeHtml(submission.originalWord)}</strong><p class="muted small">${escapeHtml(submission.nickname)}</p></div>${groupStatus === "pending" ? `<div class="button-row"><button class="btn success" data-word-review="approved" data-word-submission="${escapeAttr(submission.id)}" type="button">승인</button><button class="btn danger" data-word-review="rejected" data-word-submission="${escapeAttr(submission.id)}" type="button">반려</button></div>` : `<span class="pill ${wordChallengeStatusClass(groupStatus)}">${wordChallengeStatusLabel(groupStatus)}</span>`}</article>
+  const orderedSubmissions = groupStatus === "pending" ? submissions : [...submissions].reverse();
+  return `<section class="panel word-review-panel ${groupStatus}"><div class="status-bar"><h2>${title}</h2><span class="pill ${wordChallengeStatusClass(groupStatus)}">${submissions.length}개</span></div>${submissions.length ? `<div class="word-review-list" data-word-review-list="${groupStatus}">${orderedSubmissions.map((submission) => `
+    <article class="word-review-row" data-word-submission-row="${escapeAttr(submission.id)}"><div><strong>${escapeHtml(submission.originalWord)}</strong><p class="muted small">${escapeHtml(submission.nickname)}</p></div>${groupStatus === "pending" ? `<div class="button-row"><button class="btn success" data-word-review="approved" data-word-submission="${escapeAttr(submission.id)}" type="button" ${state.wordChallengeReviewing ? "disabled" : ""}>승인</button><button class="btn danger" data-word-review="rejected" data-word-submission="${escapeAttr(submission.id)}" type="button" ${state.wordChallengeReviewing ? "disabled" : ""}>반려</button></div>` : `<span class="pill ${wordChallengeStatusClass(groupStatus)}">${wordChallengeStatusLabel(groupStatus)}</span>`}</article>
   `).join("")}</div>` : `<div class="empty">해당 단어가 없습니다.</div>`}</section>`;
+}
+
+function captureWordChallengeReviewScroll() {
+  if (!String(state.activeView || "").startsWith("teacher-word-")) return null;
+  const lists = {};
+  document.querySelectorAll("[data-word-review-list]").forEach((list) => {
+    const key = list.dataset.wordReviewList;
+    if (!key) return;
+    lists[key] = {
+      top: list.scrollTop,
+      atEnd: list.scrollHeight - list.clientHeight - list.scrollTop <= 12
+    };
+  });
+  return {
+    pageX: Number(window.scrollX || 0),
+    pageY: Number(window.scrollY || 0),
+    lists
+  };
+}
+
+function restoreWordChallengeReviewScroll(scrollState) {
+  if (!scrollState) return;
+  Object.entries(scrollState.lists || {}).forEach(([key, saved]) => {
+    const list = document.querySelector(`[data-word-review-list="${key}"]`);
+    if (!list) return;
+    const maxTop = Math.max(0, list.scrollHeight - list.clientHeight);
+    list.scrollTop = saved.atEnd ? maxTop : Math.min(Number(saved.top || 0), maxTop);
+  });
+  if (typeof window.scrollTo === "function") {
+    window.scrollTo(Number(scrollState.pageX || 0), Number(scrollState.pageY || 0));
+  }
+}
+
+function setWordChallengeReviewButtonsDisabled(disabled) {
+  document.querySelectorAll("[data-word-review]").forEach((button) => {
+    button.disabled = disabled;
+  });
 }
 
 function renderWordChallengeRanking(limit = null) {
@@ -7681,6 +7724,14 @@ async function submitWordChallengeWord(event) {
     showToast("제출하지 못했습니다. 다시 시도해 주세요.", "error");
   } finally {
     state.wordChallengeSubmitting = false;
+    const input = document.querySelector("#wordChallengeInput");
+    const submitButton = document.querySelector("#wordChallengeForm button[type='submit']");
+    if (input) {
+      input.disabled = false;
+      input.value = state.wordChallengeDraft;
+      input.focus?.();
+    }
+    if (submitButton) submitButton.disabled = false;
   }
 }
 
@@ -7707,6 +7758,7 @@ async function reviewWordChallengeSubmission(submissionId, nextStatus) {
     showToast("단어를 처리하지 못했습니다.", "error");
   } finally {
     state.wordChallengeReviewing = false;
+    setWordChallengeReviewButtonsDisabled(false);
   }
 }
 
