@@ -126,10 +126,14 @@ function syncState(studentId, studentName, role = "student") {
   assert.equal(Object.keys(database.rooms.ROOM.wordChallenge.submissions).length, 1);
   const firstSubmissionId = Object.keys(database.rooms.ROOM.wordChallenge.submissions)[0];
 
+  formElements["#wordChallengeInput"].value = "수건";
+  await vm.runInContext("submitWordChallengeWord(__event)", sandbox);
+  assert.equal(Object.keys(database.rooms.ROOM.wordChallenge.submissions).length, 2, "a student must be able to submit again while the previous word is pending");
+
   syncState("b", "학생 B");
   formElements["#wordChallengeInput"].value = " 사과 ";
   await vm.runInContext("submitWordChallengeWord(__event)", sandbox);
-  assert.equal(Object.keys(database.rooms.ROOM.wordChallenge.submissions).length, 1, "a room-wide claim must block duplicate words");
+  assert.equal(Object.keys(database.rooms.ROOM.wordChallenge.submissions).length, 2, "a room-wide claim must block duplicate words");
 
   syncState("teacher", "선생님", "teacher");
   await vm.runInContext(`reviewWordChallengeSubmission("${firstSubmissionId}", "rejected")`, sandbox);
@@ -138,8 +142,8 @@ function syncState(studentId, studentName, role = "student") {
   syncState("b", "학생 B");
   formElements["#wordChallengeInput"].value = "사과";
   await vm.runInContext("submitWordChallengeWord(__event)", sandbox);
-  assert.equal(Object.keys(database.rooms.ROOM.wordChallenge.submissions).length, 2, "a rejected word must be available again");
-  const secondSubmissionId = Object.keys(database.rooms.ROOM.wordChallenge.submissions).find((id) => id !== firstSubmissionId);
+  assert.equal(Object.keys(database.rooms.ROOM.wordChallenge.submissions).length, 3, "a rejected word must be available again");
+  const secondSubmissionId = Object.entries(database.rooms.ROOM.wordChallenge.submissions).find(([id, submission]) => id !== firstSubmissionId && submission.originalWord === "사과")[0];
 
   syncState("teacher", "선생님", "teacher");
   await vm.runInContext(`reviewWordChallengeSubmission("${secondSubmissionId}", "approved")`, sandbox);
@@ -151,6 +155,12 @@ function syncState(studentId, studentName, role = "student") {
   assert.match(rules.rules.rooms.$roomCode.status[".validate"], /reviewing/);
   assert.ok(rules.rules.rooms.$roomCode.wordChallenge.submissions);
   assert.match(source, /runTransaction\(ref\(db, `rooms\/\$\{state\.roomCode\}\/wordChallenge`\)/, "word claims must use one atomic transaction");
+  const reviewHtml = vm.runInContext(`renderWordChallengeReviewGroup("검토 대기", [
+    { id: "old", originalWord: "사과", nickname: "학생 A", status: "pending" },
+    { id: "new", originalWord: "수건", nickname: "학생 A", status: "pending" }
+  ], "pending")`, sandbox);
+  assert.ok(reviewHtml.indexOf("data-word-submission-row=\"old\"") < reviewHtml.indexOf("data-word-submission-row=\"new\""), "new pending words must be appended without moving existing review buttons");
+  assert.match(source, /captureWordChallengeReviewScroll\(\)/, "teacher review scroll position must be preserved across realtime updates");
 
   console.log("word-challenge smoke tests passed");
 })().catch((error) => {
