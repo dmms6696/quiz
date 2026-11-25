@@ -14,6 +14,12 @@
 8. 개념 빙고: 학생이 배운 개념으로 빙고판을 만들고 설명이 승인되면 자유롭게 칸을 표시합니다.
 9. 초성 단어 챌린지: 제시된 초성에 맞는 단어를 선점해 제출하고 교사가 승인한 단어 수로 겨룹니다.
 
+## 캐릭터와 교실 사운드
+
+- 학생은 입장 후 대기 화면에서 20종 중 하나를 선택할 수 있습니다. 선택은 방에 저장되며 같은 기기에서 같은 방에 다시 들어오면 이어집니다. 다른 학생과 같은 캐릭터를 고를 수 있습니다.
+- 캐릭터는 학생 화면 상단, 교사 참가 목록, 교실 화면의 대기 명단과 순위표에 표시됩니다.
+- 확장 모니터의 교실 화면에서 **소리 켜기**를 한 번 누릅니다. **효과음만**, **음악+효과음**, 음량을 고를 수 있습니다. 소리를 끄면 무음으로 진행합니다.
+
 ## 1. 파일 구조
 
 ```text
@@ -37,7 +43,6 @@ project-root/
 `app.js` 상단에서 바꿀 수 있습니다.
 
 ```js
-const TEACHER_PASSWORD = "1234";
 const DEFAULT_TIME_LIMIT_SECONDS = 20;
 const MAX_QUESTIONS_PER_STUDENT = 3;
 const MAX_COMPLIMENTS_PER_STUDENT = 3;
@@ -86,7 +91,7 @@ const GHOST_CHAT_COOLDOWN_MS = 1000;
 
 메모리 배틀도 별도의 유료 Storage 없이 기존 Realtime Database를 사용합니다. Firebase Console에서 Storage를 만들거나 Blaze 요금제로 변경할 필요가 없습니다. 메모리 배틀 추가 후에는 Realtime Database의 `규칙` 탭에 최신 `firebase-rules.json` 전체를 다시 붙여 넣고 `게시`하세요.
 
-주의: 이 MVP의 교사 비밀번호는 정적 코드 안에 있으므로 완전한 보안 장치가 아닙니다. 실제 공개 서비스로 쓰려면 Firebase Authentication, 교사용 계정, 서버 검증 또는 Cloud Functions를 추가하세요.
+교사 입장은 Firebase Authentication에서 확인합니다. Firebase 콘솔의 Authentication → 로그인 방법에서 이메일/비밀번호를 활성화하고, 사용자 탭에 교사용 계정을 추가합니다. 앱이 사용하는 교사용 계정은 `app.js`의 `TEACHER_ACCOUNT_EMAIL`과 일치해야 합니다. 비밀번호는 Firebase에서 관리합니다.
 
 ## 4. Firebase 데이터 구조
 

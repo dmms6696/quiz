@@ -30,7 +30,7 @@ const firebaseConfig = {
 };
 
 // 교사 화면 입장 비밀번호입니다. 정적 웹앱에서는 완전한 보안 장치가 아니라 수업용 잠금에 가깝습니다.
-const TEACHER_PASSWORD = "0221";
+const TEACHER_ACCOUNT_EMAIL = "dmsg4024@gmail.com";
 
 // 문제당 제한 시간입니다.
 const DEFAULT_TIME_LIMIT_SECONDS = 20;
@@ -220,8 +220,25 @@ const GHOST_BINGO_CONDITIONS = [
 // 앱 상태
 // =========================
 
+const PLAYGROUND_AVATARS = [
+  ["01_dongmyeong", "동명이"], ["02_pine", "솔잎"], ["03_forsythia", "개나리"], ["04_eagle", "독수리"],
+  ["05_sun", "햇살"], ["06_trumpet", "트럼펫"], ["07_flute", "플루트"], ["08_beat", "비트"],
+  ["09_drum", "드럼"], ["10_melody", "멜로디"], ["11_camera", "카메라"], ["12_movie", "영화"],
+  ["13_pixel", "픽셀"], ["14_video", "비디오"], ["15_ai", "AI"], ["16_coding", "코딩"],
+  ["17_drone", "드론"], ["18_sprout", "새싹"], ["19_blue_road", "푸른 물결"], ["20_book_owl", "책 부엉이"]
+];
+const PLAYGROUND_MODE_MARKS = [
+  ["quiz", "Q"], ["compliment", "♥"], ["mafia", "◒"], ["liar", "?"],
+  ["catchmind", "✎"], ["seat", "↔"], ["memory", "▣"], ["bingo", "#"], ["word", "ㄱ"]
+];
+const classroomAudio = {
+  context: null, gain: null, musicGain: null, interval: null, room: null, phase: "",
+  enabled: false, preference: "effects", volume: 0.45
+};
+
 let firebaseApp = null;
 let db = null;
+let teacherAuth = null;
 let displayWindow = null;
 
 const state = {
@@ -229,6 +246,7 @@ const state = {
   roomCode: "",
   studentName: "",
   studentId: "",
+  teacherSigningIn: false,
   room: null,
   unsubscribeRoom: null,
   activeView: "",
@@ -282,6 +300,7 @@ const state = {
   wordChallengeDraft: "",
   wordChallengeSubmitting: false,
   wordChallengeReviewing: false,
+  avatarPromptedRoom: "",
   catchmindDrawing: {
     active: false,
     strokeId: "",
@@ -310,6 +329,7 @@ bootApp();
 // =========================
 
 function bootApp() {
+  bindPlaygroundAvatarPicker();
   const params = new URLSearchParams(window.location.search);
   const isDisplay = params.get("display") === "1";
   const displayRoomCode = normalizeRoomCode(params.get("room") || "");
@@ -326,6 +346,7 @@ function enterDisplayMode(roomCode) {
   state.role = "display";
   state.roomCode = roomCode;
   state.activeView = "";
+  bindClassroomSound();
 
   if (!db) {
     setView("display-no-firebase", `
@@ -353,11 +374,15 @@ function enterDisplayMode(roomCode) {
 
 function renderHome() {
   clearRoomSubscription();
+  if (state.role === "teacher") endTeacherAuthentication();
   clearTimer();
   closeSeatConfirmModal();
   state.role = null;
   state.room = null;
   state.activeView = "home";
+  state.avatarPromptedRoom = "";
+  setPlaygroundTheme();
+  syncPlaygroundStudentProfile();
   state.seatSettingsDraft = null;
   state.seatInteractionKey = "";
   clearMemorySubscriptions();
@@ -370,12 +395,12 @@ function renderHome() {
   const savedName = localStorage.getItem("wbq_studentName") || "";
 
   appEl.innerHTML = `
-    <section class="screen">
-      <div class="hero">
-        <p class="eyebrow">동명중학교</p>
-        <h1>동명중학교 PLAYGROUND</h1>
-        <p class="lead">퀴즈, 칭찬, 추리, 게임이 모이는 우리 학교 플레이 공간</p>
-      </div>
+    <section class="screen playground-home">
+      <header class="playground-masthead">
+        <div><h1>동명중학교 PLAYGROUND</h1>
+        <p class="lead">퀴즈, 칭찬, 추리, 게임이 모이는 우리 학교 플레이 공간</p></div>
+        ${renderPlaygroundAvatar(null, null, "playground-mascot")}
+      </header>
 
       ${db ? "" : `
         <div class="notice danger">
@@ -384,10 +409,9 @@ function renderHome() {
       `}
 
       <div class="grid-2 home-entry-grid">
-        <section class="panel">
+        <section class="panel playground-student-entry">
           <div>
             <h2>학생으로 입장</h2>
-            <p class="muted">방 코드와 이름을 입력하면 현재 모드에 맞는 학생 화면으로 이동합니다.</p>
           </div>
           <div class="form-grid">
             <div class="field">
@@ -402,10 +426,9 @@ function renderHome() {
           </div>
         </section>
 
-        <section class="panel">
+        <section class="panel playground-teacher-entry">
           <div>
             <h2>교사로 입장</h2>
-            <p class="muted">방을 만들거나 기존 방 코드로 다시 들어갑니다.</p>
           </div>
           <div class="form-grid">
             <div class="field">
@@ -419,42 +442,12 @@ function renderHome() {
             <div class="field">
               <span class="label">게임 모드</span>
               <div class="mode-options">
-                <label class="mode-tile">
-                  <input type="radio" name="teacherMode" value="quiz" checked />
-                  <span><strong>퀴즈 배틀</strong></span>
-                </label>
-                <label class="mode-tile">
-                  <input type="radio" name="teacherMode" value="compliment" />
-                  <span><strong>칭찬 스무고개</strong></span>
-                </label>
-                <label class="mode-tile">
-                  <input type="radio" name="teacherMode" value="mafia" />
-                  <span><strong>교실 마피아</strong></span>
-                </label>
-                <label class="mode-tile">
-                  <input type="radio" name="teacherMode" value="liar" />
-                  <span><strong>라이어게임</strong></span>
-                </label>
-                <label class="mode-tile">
-                  <input type="radio" name="teacherMode" value="catchmind" />
-                  <span><strong>캐치마인드</strong></span>
-                </label>
-                <label class="mode-tile">
-                  <input type="radio" name="teacherMode" value="seat" />
-                  <span><strong>자리바꾸기</strong></span>
-                </label>
-                <label class="mode-tile">
-                  <input type="radio" name="teacherMode" value="memory" />
-                  <span><strong>메모리 배틀</strong></span>
-                </label>
-                <label class="mode-tile">
-                  <input type="radio" name="teacherMode" value="bingo" />
-                  <span><strong>개념 빙고</strong></span>
-                </label>
-                <label class="mode-tile">
-                  <input type="radio" name="teacherMode" value="word" />
-                  <span><strong>초성 단어 챌린지</strong></span>
-                </label>
+                ${PLAYGROUND_MODE_MARKS.map(([mode, mark]) => `
+                  <label class="mode-tile" data-mode="${mode}">
+                    <input type="radio" name="teacherMode" value="${mode}" ${mode === "quiz" ? "checked" : ""} />
+                    <span class="playground-mode-body"><b class="playground-mode-mark" aria-hidden="true">${mark}</b><strong>${modeLabel(mode)}</strong></span>
+                  </label>
+                `).join("")}
               </div>
             </div>
             <div class="button-row">
@@ -468,6 +461,11 @@ function renderHome() {
   `;
 
   document.querySelector("#studentEnterBtn").addEventListener("click", enterStudent);
+  ["#studentRoomCode", "#studentName"].forEach((selector) => {
+    document.querySelector(selector).addEventListener("keydown", (event) => {
+      if (event.key === "Enter" && !event.isComposing && event.keyCode !== 229) enterStudent();
+    });
+  });
   document.querySelector("#teacherEnterBtn").addEventListener("click", enterTeacher);
   document.querySelector("#newRoomCodeBtn").addEventListener("click", () => {
     document.querySelector("#teacherRoomCode").value = generateRoomCode();
@@ -1813,15 +1811,16 @@ function renderDisplayShell(viewName, title, subtitle, bodyHtml, afterRender = n
                   ? "word-challenge-mode"
                   : "";
   setView(viewName, `
-    <section class="screen display-stage ${modeClass}">
+    <section class="screen display-stage ${modeClass}" data-stage="${escapeAttr(state.room?.status || "waiting")}">
       <div class="display-header">
         <div>
-          <p class="eyebrow">동명중학교 PLAYGROUND · 방 코드 ${escapeHtml(state.roomCode)}</p>
+          <p class="eyebrow">동명중학교 PLAYGROUND</p>
           <h1>${escapeHtml(title)}</h1>
           ${subtitle ? `<p class="lead">${escapeHtml(subtitle)}</p>` : ""}
         </div>
         <span class="pill ${statusPillClass(state.room?.status || "waiting")}">${statusLabel(state.room?.status || "waiting")}</span>
       </div>
+      ${canChoosePlaygroundAvatar() ? renderPlaygroundLobby() : ""}
       ${bodyHtml}
     </section>
   `, afterRender, force);
@@ -3347,7 +3346,7 @@ function renderCatchmindCorrectRanking() {
       ${answers.map((answer, index) => `
         <div class="ranking-row rank-${index + 1}">
           <span class="rank-medal">${medals[index] || answer.rank}</span>
-          <strong>${escapeHtml(answer.name)}</strong>
+          <strong>${renderPlaygroundName(answer)}</strong>
           <span class="score">+${answer.scoreEarned}점</span>
         </div>
       `).join("")}
@@ -4911,7 +4910,7 @@ function renderSeatGrid({ game = null, settings = null, setup = false, interacti
           const dataAttribute = interactive ? `data-seat-select="${seatNumber}"` : targetSet.has(seatNumber) ? `data-seat-card-target="${seatNumber}"` : "";
           return `<button class="seat-tile ${assigned ? "assigned" : "available"} ${protectedSeat ? "protected" : ""} ${isSelectedTarget ? "selected-target" : ""} ${reveal ? revealedClass : ""} ${ownClass}" ${dataAttribute} ${canClick ? "" : "disabled"} type="button" ${reveal ? `data-seat-reveal-index="${Math.max(0, revealIndex)}"` : ""}>
             <span class="seat-number">${seatNumber}번</span>
-            ${reveal ? `<strong class="seat-owner">${escapeHtml(owner?.name || "-")}</strong>` : `<strong>${assigned ? (protectedSeat ? "보호 · 선택 완료" : "선택 완료") : "선택 가능"}</strong>`}
+            ${reveal ? `<strong class="seat-owner">${owner ? renderPlaygroundName(owner) : "-"}</strong>` : `<strong>${assigned ? (protectedSeat ? "보호 · 선택 완료" : "선택 완료") : "선택 가능"}</strong>`}
           </button>`;
         }).join("")}
       </div>
@@ -6615,7 +6614,7 @@ function renderMemoryOwnResult(currentRank, hallRank, result, insight) {
 
 function renderMemoryRanking(records, highlightId = "") {
   if (!records.length) return `<div class="empty">아직 등록된 완료 기록이 없습니다.</div>`;
-  return `<div class="ranking-list">${records.map((record, index) => `<div class="ranking-row memory-rank-${index + 1} ${record.playerId === highlightId ? "me" : ""}"><span class="rank-number">${index < 3 ? ["1위", "2위", "3위"][index] : `${index + 1}위`}</span><strong>${escapeHtml(record.playerName || "이름 없음")}</strong><span>${formatMemoryTime(record.completionTimeMs)}${Number.isFinite(Number(record.attempts)) ? ` · ${Number(record.attempts)}회` : ""}</span></div>`).join("")}</div>`;
+  return `<div class="ranking-list">${records.map((record, index) => `<div class="ranking-row memory-rank-${index + 1} ${record.playerId === highlightId ? "me" : ""}"><span class="rank-number">${index + 1}위</span><strong>${renderPlaygroundName(record)}</strong><span>${formatMemoryTime(record.completionTimeMs)}${Number.isFinite(Number(record.attempts)) ? ` · ${Number(record.attempts)}회` : ""}</span></div>`).join("")}</div>`;
 }
 
 function renderMemoryAwards(records) {
@@ -7006,7 +7005,7 @@ function renderBingoTurnOrder() {
 function renderBingoWinners() {
   const winners = getBingoWinners();
   if (!winners.length) return `<div class="empty">아직 교사가 인정한 빙고가 없습니다.</div>`;
-  return `<div class="ranking">${winners.map((winner) => `<div class="ranking-row rank-${winner.rank}"><span class="rank-medal">${winner.rank}</span><strong>${escapeHtml(winner.name || getStudentNameById(winner.studentId))}</strong><span class="score">${Number(winner.lineCount || 0)}빙고</span></div>`).join("")}</div>`;
+  return `<div class="ranking">${winners.map((winner) => `<div class="ranking-row rank-${winner.rank}"><span class="rank-medal">${winner.rank}</span><strong>${renderPlaygroundName(winner, winner.name || getStudentNameById(winner.studentId))}</strong><span class="score">${Number(winner.lineCount || 0)}빙고</span></div>`).join("")}</div>`;
 }
 
 function renderBingoDisplay(force = false) {
@@ -7386,8 +7385,8 @@ function startWordChallengeTimer({ textSelector, fillSelector, onEnd }) {
       onEnd?.();
     }
   };
-  tick();
   state.timerId = window.setInterval(tick, 200);
+  tick();
 }
 
 function renderWordChallengeStudentRoute() {
@@ -7431,13 +7430,20 @@ function renderWordChallengeStudentGame(force = false) {
   const ownSubmissions = getMyWordChallengeSubmissions();
   const approvedCount = ownSubmissions.filter((submission) => submission.status === "approved").length;
   const timeUp = getWordChallengeRemainingMs(game) <= 0 || state.room.status === "result";
-  const ownSignature = ownSubmissions.map((submission) => `${submission.id}:${submission.status}`).join("|");
-  setView(`student-word-${state.room.status}-${game.gameId}-${ownSignature}`, `
+  const view = `student-word-${state.roomCode}-${game.gameId}-${timeUp}`;
+  const submissionMarkup = renderMyWordChallengeSubmissions(ownSubmissions);
+  if (!force && state.activeView === view) {
+    setPlaygroundText("#wordStudentApproved", `인정 단어 ${approvedCount}개`);
+    setPlaygroundText("#wordStudentSubmitted", `${ownSubmissions.length}개 제출`);
+    updateWordChallengeRegion("#wordStudentSubmissions", submissionMarkup);
+    return;
+  }
+  setView(view, `
     <section class="screen word-challenge-mode">
       <div class="status-bar">
         <span class="pill blue">방 코드 ${escapeHtml(state.roomCode)}</span>
         <span class="pill ${timeUp ? "red" : "green"}">${timeUp ? "시간 종료" : "도전 중"}</span>
-        <span class="pill gold">인정 단어 ${approvedCount}개</span>
+        <span class="pill gold" id="wordStudentApproved">인정 단어 ${approvedCount}개</span>
       </div>
       <section class="panel word-hero-panel">
         <p class="eyebrow">제시 초성</p>
@@ -7449,20 +7455,23 @@ function renderWordChallengeStudentGame(force = false) {
         <form id="wordChallengeForm" class="panel word-submit-form">
           <label for="wordChallengeInput">단어 입력</label>
           <div class="word-input-row">
-            <input id="wordChallengeInput" maxlength="${MAX_WORD_CHALLENGE_LENGTH}" autocomplete="off" autocapitalize="off" placeholder="단어를 입력하세요" value="${escapeAttr(state.wordChallengeDraft)}" ${state.wordChallengeSubmitting ? "disabled" : ""} />
+            <input id="wordChallengeInput" maxlength="${MAX_WORD_CHALLENGE_LENGTH}" autocomplete="off" autocapitalize="off" placeholder="단어를 입력하세요" value="${escapeAttr(state.wordChallengeDraft)}" />
             <button class="btn primary" type="submit" ${state.wordChallengeSubmitting ? "disabled" : ""}>제출</button>
           </div>
           <p class="muted small">입력한 단어의 초성이 ${escapeHtml(game.settings.chosung)}와 정확히 같아야 합니다.</p>
         </form>
       `}
       <section class="panel">
-        <div class="status-bar"><h2>내 제출 현황</h2><span class="pill blue">${ownSubmissions.length}개 제출</span></div>
-        ${renderMyWordChallengeSubmissions(ownSubmissions)}
+        <div class="status-bar"><h2>내 제출 현황</h2><span class="pill blue" id="wordStudentSubmitted">${ownSubmissions.length}개 제출</span></div>
+        <div id="wordStudentSubmissions" aria-live="polite">${submissionMarkup}</div>
       </section>
     </section>
   `, () => {
     const input = document.querySelector("#wordChallengeInput");
     input?.addEventListener("input", () => { state.wordChallengeDraft = input.value; });
+    input?.addEventListener("keydown", (event) => {
+      if (event.key === "Enter" && (event.isComposing || event.keyCode === 229)) event.preventDefault();
+    });
     document.querySelector("#wordChallengeForm")?.addEventListener("submit", submitWordChallengeWord);
     if (!timeUp) {
       input?.focus();
@@ -7493,8 +7502,28 @@ function renderWordChallengeTeacherDashboard(force = true) {
   const approved = submissions.filter((submission) => submission.status === "approved");
   const rejected = submissions.filter((submission) => submission.status === "rejected");
   const canEdit = status === "waiting";
+  const students = getStudents();
+  const view = `teacher-word-${state.roomCode}-${status}-${game.gameId}-${game.settings.chosung}-${game.settings.duration}`;
+  const pendingWarning = status === "result" && pending.length
+    ? `<div class="notice warn">아직 검토하지 않은 단어가 ${pending.length}개 있습니다.</div>`
+    : "";
+  if (state.activeView === view) {
+    setPlaygroundText("#wordTeacherSubmissions", String(submissions.length));
+    setPlaygroundText("#wordTeacherPending", String(pending.length));
+    setPlaygroundText("#wordTeacherConnected", String(students.filter((student) => student.connected).length));
+    setPlaygroundText("#wordPendingCount", `${pending.length}개`);
+    updateWordChallengePendingRows(pending);
+    updateWordChallengeRegion("#wordTeacherWarning", pendingWarning);
+    updateWordChallengeRegion("#wordTeacherRanking", renderWordChallengeRanking());
+    updateWordChallengeRegion("#wordTeacherStudents", renderStudentList(students));
+    updateWordChallengeRegion("#wordTeacherApproved", renderWordChallengeReviewGroup("승인됨", approved, "approved"));
+    updateWordChallengeRegion("#wordTeacherRejected", renderWordChallengeReviewGroup("반려됨", rejected, "rejected"));
+    const start = document.querySelector('[data-action="word-start"]');
+    if (start) start.disabled = !canEdit || !isValidWordChallengeChosung(game.settings.chosung) || !students.length;
+    return;
+  }
   const reviewScrollState = captureWordChallengeReviewScroll();
-  setView(`teacher-word-${status}-${game.gameId}-${submissions.map((item) => `${item.id}:${item.status}`).join("|")}`, `
+  setView(view, `
     <section class="screen word-challenge-mode">
       <div class="status-bar">
         <div><p class="eyebrow">교사 화면</p><h1>초성 단어 챌린지</h1></div>
@@ -7506,21 +7535,13 @@ function renderWordChallengeTeacherDashboard(force = true) {
           <div class="button-row"><span class="pill ${statusPillClass(status)}">${statusLabel(status)}</span><button class="btn ghost" id="copyRoomCodeBtn" type="button">방 코드 복사</button><button class="btn dark" data-action="open-display" type="button">교실 화면 팝업</button></div>
         </div>
         <div class="stats">
-          <div class="stat"><span class="muted">전체 제출</span><span class="num">${submissions.length}</span></div>
-          <div class="stat"><span class="muted">검토 대기</span><span class="num">${pending.length}</span></div>
-          <div class="stat"><span class="muted">접속 학생</span><span class="num">${getStudents().filter((student) => student.connected).length}</span></div>
+          <div class="stat"><span class="muted">전체 제출</span><span class="num" id="wordTeacherSubmissions">${submissions.length}</span></div>
+          <div class="stat"><span class="muted">검토 대기</span><span class="num" id="wordTeacherPending">${pending.length}</span></div>
+          <div class="stat"><span class="muted">접속 학생</span><span class="num" id="wordTeacherConnected">${students.filter((student) => student.connected).length}</span></div>
         </div>
       </section>
       <div class="teacher-grid">
         <aside class="panel">
-          ${renderTeacherModeControls()}
-          <div class="stack">
-            <h2>게임 설정</h2>
-            <div class="field"><label for="wordChosungInput">제시 초성</label><input id="wordChosungInput" maxlength="8" placeholder="예: ㅅㄱ" value="${escapeAttr(game.settings.chosung)}" ${canEdit ? "" : "disabled"} /></div>
-            <div class="field"><label for="wordDurationInput">제한 시간(초)</label><input id="wordDurationInput" type="number" min="${MIN_WORD_CHALLENGE_SECONDS}" max="${MAX_WORD_CHALLENGE_SECONDS}" value="${game.settings.duration}" ${canEdit ? "" : "disabled"} /></div>
-            <div class="button-row word-duration-presets">${[30, 60, 90, 120].map((seconds) => `<button class="btn ghost" data-word-duration="${seconds}" type="button" ${canEdit ? "" : "disabled"}>${seconds}초</button>`).join("")}</div>
-            <button class="btn primary" data-action="word-save-settings" type="button" ${canEdit ? "" : "disabled"}>설정 저장</button>
-          </div>
           <div class="stack">
             <h2>진행 조작</h2>
             <div class="button-row">
@@ -7531,15 +7552,23 @@ function renderWordChallengeTeacherDashboard(force = true) {
               <button class="btn danger" data-action="clear-room" type="button">학생/자료 목록 초기화</button>
             </div>
             ${status === "playing" ? `<div class="timer-wrap"><div class="timer-top"><span>남은 시간</span><strong id="wordTeacherTimer">${formatWordChallengeTime(getWordChallengeRemainingMs(game))}</strong></div><div class="timer-track"><div class="timer-fill" id="wordTeacherTimerFill"></div></div></div>` : ""}
-            ${status === "result" && pending.length ? `<div class="notice warn">아직 검토하지 않은 단어가 ${pending.length}개 있습니다.</div>` : ""}
+            <div id="wordTeacherWarning">${pendingWarning}</div>
           </div>
-          <section class="stack"><h2>참가 학생</h2>${renderStudentList(getStudents())}</section>
+          <div class="stack">
+            <h2>게임 설정</h2>
+            <div class="field"><label for="wordChosungInput">제시 초성</label><input id="wordChosungInput" maxlength="8" placeholder="예: ㅅㄱ" value="${escapeAttr(game.settings.chosung)}" ${canEdit ? "" : "disabled"} /></div>
+            <div class="field"><label for="wordDurationInput">제한 시간(초)</label><input id="wordDurationInput" type="number" min="${MIN_WORD_CHALLENGE_SECONDS}" max="${MAX_WORD_CHALLENGE_SECONDS}" value="${game.settings.duration}" ${canEdit ? "" : "disabled"} /></div>
+            <div class="button-row word-duration-presets">${[30, 60, 90, 120].map((seconds) => `<button class="btn ghost" data-word-duration="${seconds}" type="button" ${canEdit ? "" : "disabled"}>${seconds}초</button>`).join("")}</div>
+            <button class="btn primary" data-action="word-save-settings" type="button" ${canEdit ? "" : "disabled"}>설정 저장</button>
+          </div>
+          ${renderTeacherModeControls()}
+          <section class="stack"><h2>참가 학생</h2><div id="wordTeacherStudents">${renderStudentList(students)}</div></section>
         </aside>
         <div class="screen">
-          <section class="panel"><div class="status-bar"><h2>실시간 순위</h2><span class="pill gold">승인 단어 기준</span></div>${renderWordChallengeRanking()}</section>
           ${renderWordChallengeReviewGroup("검토 대기", pending, "pending")}
-          ${renderWordChallengeReviewGroup("승인됨", approved, "approved")}
-          ${renderWordChallengeReviewGroup("반려됨", rejected, "rejected")}
+          <section class="panel"><div class="status-bar"><h2>실시간 순위</h2><span class="pill gold">승인 단어 기준</span></div><div id="wordTeacherRanking">${renderWordChallengeRanking()}</div></section>
+          <div id="wordTeacherApproved">${renderWordChallengeReviewGroup("승인됨", approved, "approved")}</div>
+          <div id="wordTeacherRejected">${renderWordChallengeReviewGroup("반려됨", rejected, "rejected")}</div>
         </div>
       </div>
     </section>
@@ -7549,20 +7578,53 @@ function renderWordChallengeTeacherDashboard(force = true) {
     document.querySelectorAll("[data-switch-mode]").forEach((button) => button.addEventListener("click", () => switchRoomMode(button.dataset.switchMode)));
     document.querySelectorAll("[data-action]").forEach((button) => button.addEventListener("click", () => handleTeacherAction(button.dataset.action)));
     document.querySelectorAll("[data-word-duration]").forEach((button) => button.addEventListener("click", () => { document.querySelector("#wordDurationInput").value = button.dataset.wordDuration; }));
-    document.querySelectorAll("[data-word-review]").forEach((button) => button.addEventListener("click", () => {
-      setWordChallengeReviewButtonsDisabled(true);
+    document.querySelector('[data-word-review-list="pending"]')?.addEventListener("click", (event) => {
+      const button = event.target.closest("[data-word-review]");
+      if (!button || button.disabled) return;
       reviewWordChallengeSubmission(button.dataset.wordSubmission, button.dataset.wordReview);
-    }));
+    });
     if (status === "playing") startWordChallengeTimer({ textSelector: "#wordTeacherTimer", fillSelector: "#wordTeacherTimerFill", onEnd: enterWordChallengeReview });
     restoreWordChallengeReviewScroll(reviewScrollState);
   }, force);
 }
 
 function renderWordChallengeReviewGroup(title, submissions, groupStatus) {
-  const orderedSubmissions = groupStatus === "pending" ? submissions : [...submissions].reverse();
-  return `<section class="panel word-review-panel ${groupStatus}"><div class="status-bar"><h2>${title}</h2><span class="pill ${wordChallengeStatusClass(groupStatus)}">${submissions.length}개</span></div>${submissions.length ? `<div class="word-review-list" data-word-review-list="${groupStatus}">${orderedSubmissions.map((submission) => `
-    <article class="word-review-row" data-word-submission-row="${escapeAttr(submission.id)}"><div><strong>${escapeHtml(submission.originalWord)}</strong><p class="muted small">${escapeHtml(submission.nickname)}</p></div>${groupStatus === "pending" ? `<div class="button-row"><button class="btn success" data-word-review="approved" data-word-submission="${escapeAttr(submission.id)}" type="button" ${state.wordChallengeReviewing ? "disabled" : ""}>승인</button><button class="btn danger" data-word-review="rejected" data-word-submission="${escapeAttr(submission.id)}" type="button" ${state.wordChallengeReviewing ? "disabled" : ""}>반려</button></div>` : `<span class="pill ${wordChallengeStatusClass(groupStatus)}">${wordChallengeStatusLabel(groupStatus)}</span>`}</article>
-  `).join("")}</div>` : `<div class="empty">해당 단어가 없습니다.</div>`}</section>`;
+  const pending = groupStatus === "pending";
+  const orderedSubmissions = pending ? submissions : [...submissions].reverse();
+  return `<section class="panel word-review-panel ${groupStatus}">
+    <div class="status-bar"><h2>${title}</h2><span ${pending ? 'id="wordPendingCount"' : ""} class="pill ${wordChallengeStatusClass(groupStatus)}">${submissions.length}개</span></div>
+    <div class="word-review-list" data-word-review-list="${groupStatus}">${orderedSubmissions.map(renderWordChallengeReviewRow).join("")}</div>
+    <div class="empty" ${pending ? 'id="wordPendingEmpty"' : ""} ${submissions.length ? "hidden" : ""}>해당 단어가 없습니다.</div>
+  </section>`;
+}
+
+function renderWordChallengeReviewRow(submission) {
+  const id = escapeAttr(submission.id);
+  return `<article class="word-review-row" data-word-submission-row="${id}">
+    <div><strong>${escapeHtml(submission.originalWord)}</strong><p class="muted small">${renderPlaygroundName(submission, submission.nickname)}</p></div>
+    ${submission.status === "pending" ? `<div class="button-row">
+      <button class="btn success" data-word-review="approved" data-word-submission="${id}" type="button" ${state.wordChallengeReviewing ? "disabled" : ""}>승인</button>
+      <button class="btn danger" data-word-review="rejected" data-word-submission="${id}" type="button" ${state.wordChallengeReviewing ? "disabled" : ""}>반려</button>
+    </div>` : `<span class="pill ${wordChallengeStatusClass(submission.status)}">${wordChallengeStatusLabel(submission.status)}</span>`}
+  </article>`;
+}
+
+function updateWordChallengePendingRows(pending) {
+  const list = document.querySelector('[data-word-review-list="pending"]');
+  if (!list) return;
+  const pendingIds = new Set(pending.map(({ id }) => id));
+  const items = Array.from(list.children);
+  const existingIds = new Set(items.map((row) => row.dataset.wordSubmissionRow));
+  const listTop = list.getBoundingClientRect().top;
+  const anchor = items.find((row) => pendingIds.has(row.dataset.wordSubmissionRow) && row.getBoundingClientRect().bottom > listTop);
+  const anchorTop = anchor?.getBoundingClientRect().top;
+  for (const row of items) {
+    if (!pendingIds.has(row.dataset.wordSubmissionRow)) row.remove();
+  }
+  const additions = pending.filter(({ id }) => !existingIds.has(id));
+  if (additions.length) list.insertAdjacentHTML("beforeend", additions.map(renderWordChallengeReviewRow).join(""));
+  if (anchor) list.scrollTop += anchor.getBoundingClientRect().top - anchorTop;
+  document.querySelector("#wordPendingEmpty").hidden = pending.length > 0;
 }
 
 function captureWordChallengeReviewScroll() {
@@ -7611,7 +7673,7 @@ function renderWordChallengeRanking(limit = null) {
   return `<div class="ranking">${visible.map((student, index) => {
     if (student.wordScore !== lastScore) lastRank = index + 1;
     lastScore = student.wordScore;
-    return `<div class="ranking-row rank-${lastRank}"><span class="rank-medal">${lastRank}</span><strong>${escapeHtml(student.name)}</strong><span class="score">${student.wordScore}개</span></div>`;
+    return `<div class="ranking-row rank-${lastRank}"><span class="rank-medal">${lastRank}</span><strong>${renderPlaygroundName(student)}</strong><span class="score">${student.wordScore}개</span></div>`;
   }).join("")}</div>`;
 }
 
@@ -7626,11 +7688,14 @@ function renderWordChallengeDisplay(force = false) {
     return;
   }
   if (status === "playing") {
-    renderDisplayShell(`display-word-playing-${game.gameId}-${submissions.length}-${approvedCount}`, "초성 단어 챌린지", "제한 시간 안에 단어를 최대한 많이 찾아보세요.", `
-      <section class="panel word-hero-panel"><p class="eyebrow">제시 초성</p><div class="word-chosung">${escapeHtml(game.settings.chosung)}</div><div class="word-clock" id="wordDisplayTimer">${formatWordChallengeTime(getWordChallengeRemainingMs(game))}</div><div class="timer-track"><div class="timer-fill" id="wordDisplayTimerFill"></div></div></section>
-      <div class="stats"><div class="stat"><span class="muted">전체 제출</span><span class="num">${submissions.length}</span></div><div class="stat"><span class="muted">승인</span><span class="num">${approvedCount}</span></div><div class="stat"><span class="muted">참가 학생</span><span class="num">${getStudents().length}</span></div></div>
+    renderDisplayShell(`display-word-playing-${game.gameId}-${submissions.length}-${approvedCount}`, "초성 단어 챌린지", "", `
+      <section class="panel word-hero-panel word-display-play">
+        <div><p class="eyebrow">제시 초성</p><div class="word-chosung">${escapeHtml(game.settings.chosung)}</div></div>
+        <div class="word-display-time"><div class="word-clock" id="wordDisplayTimer">${formatWordChallengeTime(getWordChallengeRemainingMs(game))}</div><div class="timer-track"><div class="timer-fill" id="wordDisplayTimerFill"></div></div></div>
+        <p class="word-display-submit-count">${submissions.length}개 제출</p>
+      </section>
       <section class="panel"><h2>실시간 순위</h2>${renderWordChallengeRanking(8)}</section>
-    `, () => startWordChallengeTimer({ textSelector: "#wordDisplayTimer", fillSelector: "#wordDisplayTimerFill", onEnd: () => renderWordChallengeDisplay(true) }), force);
+    `, () => startWordChallengeTimer({ textSelector: "#wordDisplayTimer", fillSelector: "#wordDisplayTimerFill" }), force);
     return;
   }
   if (status === "result") {
@@ -7642,7 +7707,21 @@ function renderWordChallengeDisplay(force = false) {
 
 function renderWordChallengeFinalBody() {
   const approved = getWordChallengeSubmissions().filter((submission) => submission.status === "approved").sort((a, b) => String(a.originalWord).localeCompare(String(b.originalWord), "ko"));
-  return `<section class="panel word-hero-panel result-panel"><p class="eyebrow">제시 초성 ${escapeHtml(getWordChallengeState().settings.chosung)}</p><h1>총 ${approved.length}개의 단어를 찾았습니다.</h1></section><section class="panel"><h2>최종 순위</h2>${renderWordChallengeRanking()}</section><section class="panel"><h2>승인된 전체 단어</h2>${approved.length ? `<div class="word-approved-grid">${approved.map((submission) => `<div class="word-approved-item"><strong>${escapeHtml(submission.originalWord)}</strong><span>${escapeHtml(submission.nickname)}</span></div>`).join("")}</div>` : `<div class="empty">승인된 단어가 없습니다.</div>`}</section>`;
+  const leaders = getWordChallengeRanking().filter((student) => student.wordScore > 0).slice(0, 3);
+  let rank = 1;
+  const podiumRanks = leaders.map((student, index) => {
+    if (index > 0 && student.wordScore !== leaders[index - 1].wordScore) rank = index + 1;
+    return rank;
+  });
+  const podiumOrder = leaders.length === 3 ? [1, 0, 2] : leaders.map((_, index) => index);
+  const podium = leaders.length ? `<div class="final-podium word-podium">${podiumOrder.map((index) =>
+    renderPodium({ ...leaders[index], score: leaders[index].wordScore }, podiumRanks[index], ["first", "second", "third"][index], "개")
+  ).join("")}</div>` : "";
+  return `
+    <section class="panel word-hero-panel result-panel"><p class="eyebrow">제시 초성 ${escapeHtml(getWordChallengeState().settings.chosung)}</p><h1>총 ${approved.length}개의 단어를 찾았습니다.</h1></section>
+    ${podium}
+    <section class="panel"><h2>최종 순위</h2>${renderWordChallengeRanking()}</section>
+    <section class="panel"><h2>승인된 전체 단어</h2>${approved.length ? `<div class="word-approved-grid">${approved.map((submission) => `<div class="word-approved-item"><strong>${escapeHtml(submission.originalWord)}</strong>${renderPlaygroundName(submission, submission.nickname)}</div>`).join("")}</div>` : `<div class="empty">승인된 단어가 없습니다.</div>`}</section>`;
 }
 
 function renderWordChallengeFinalResult(viewName, showTeacherControls, force = false) {
@@ -7692,7 +7771,9 @@ async function submitWordChallengeWord(event) {
   event.preventDefault();
   if (state.wordChallengeSubmitting) return;
   const game = getWordChallengeState();
-  const word = normalizeWordChallengeWord(document.querySelector("#wordChallengeInput")?.value || state.wordChallengeDraft);
+  const input = document.querySelector("#wordChallengeInput");
+  const originalDraft = input?.value ?? state.wordChallengeDraft;
+  const word = normalizeWordChallengeWord(originalDraft);
   if (!word) return showToast("단어를 입력해 주세요.", "error");
   if (word.length > MAX_WORD_CHALLENGE_LENGTH || !/^[가-힣]+$/.test(word)) return showToast("한글 음절로 된 단어만 입력해 주세요.", "error");
   if (extractWordChosung(word) !== normalizeWordChallengeChosung(game.settings.chosung)) return showToast("제시된 초성과 일치하지 않습니다.", "error");
@@ -7700,9 +7781,17 @@ async function submitWordChallengeWord(event) {
   const submissionId = `word_${state.studentId}_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
   const submittedAt = getWordChallengeNow();
   state.wordChallengeSubmitting = true;
+  state.wordChallengeDraft = "";
+  const button = document.querySelector("#wordChallengeForm button[type='submit']");
+  if (button) button.disabled = true;
+  if (input) {
+    input.value = "";
+    input.focus?.({ preventScroll: true });
+  }
+  let committed = false;
   try {
     const result = await runTransaction(ref(db, `rooms/${state.roomCode}/wordChallenge`), (current) => {
-      if (!current || current.gameId !== game.gameId || !current.startedAt) return;
+      if (!current || current.gameId !== game.gameId || !current.startedAt || current.endedAt) return;
       const endAt = Number(current.startedAt) + Number(current.settings?.duration || DEFAULT_WORD_CHALLENGE_SECONDS) * 1000;
       if (getWordChallengeNow() >= endAt) return;
       current.claims = current.claims || {};
@@ -7717,27 +7806,38 @@ async function submitWordChallengeWord(event) {
       showToast(latest.claims?.[word] ? "이미 제출한 단어입니다." : "제한 시간이 종료되었습니다.", "error");
       return;
     }
-    state.wordChallengeDraft = "";
-    showToast("단어를 제출했습니다. 선생님 검토를 기다려 주세요.", "success");
+    committed = true;
+    showToast("제출 완료. 다음 단어를 입력할 수 있습니다.", "success");
   } catch (error) {
     console.error(error);
     showToast("제출하지 못했습니다. 다시 시도해 주세요.", "error");
   } finally {
     state.wordChallengeSubmitting = false;
-    const input = document.querySelector("#wordChallengeInput");
     const submitButton = document.querySelector("#wordChallengeForm button[type='submit']");
-    if (input) {
-      input.disabled = false;
-      input.value = state.wordChallengeDraft;
-      input.focus?.();
+    if (input && input === document.querySelector("#wordChallengeInput") && !committed && !input.value) {
+      input.value = originalDraft;
+      state.wordChallengeDraft = originalDraft;
     }
     if (submitButton) submitButton.disabled = false;
   }
 }
 
+function setPlaygroundText(selector, value) {
+  const element = document.querySelector(selector);
+  if (element && element.textContent !== value) element.textContent = value;
+}
+
+function updateWordChallengeRegion(selector, html) {
+  const element = document.querySelector(selector);
+  if (!element || element.dataset.markup === html) return;
+  element.innerHTML = html;
+  element.dataset.markup = html;
+}
+
 async function reviewWordChallengeSubmission(submissionId, nextStatus) {
   if (state.role !== "teacher" || !["approved", "rejected"].includes(nextStatus) || state.wordChallengeReviewing) return;
   state.wordChallengeReviewing = true;
+  setWordChallengeReviewButtonsDisabled(true);
   try {
     const result = await runTransaction(ref(db, `rooms/${state.roomCode}/wordChallenge`), (current) => {
       const submission = current?.submissions?.[submissionId];
@@ -7751,7 +7851,7 @@ async function reviewWordChallengeSubmission(submissionId, nextStatus) {
         delete current.claims[submission.normalizedWord];
       }
       return current;
-    });
+    }, { applyLocally: false });
     showToast(result.committed ? (nextStatus === "approved" ? "단어를 승인했습니다." : "단어를 반려하고 선점을 해제했습니다.") : "이미 처리된 단어입니다.", result.committed ? "success" : "error");
   } catch (error) {
     console.error(error);
@@ -7801,6 +7901,7 @@ async function resetWordChallengeWithStudents() {
 // =========================
 
 async function enterStudent() {
+  if (state.teacherSigningIn) return;
   if (!db) {
     showToast("Firebase 설정값을 먼저 입력해 주세요.", "error");
     return;
@@ -7861,22 +7962,36 @@ async function enterStudent() {
 }
 
 async function enterTeacher() {
+  if (state.teacherSigningIn) return;
   if (!db) {
     showToast("Firebase 설정값을 먼저 입력해 주세요.", "error");
     return;
   }
 
-  const password = document.querySelector("#teacherPassword").value;
+  const passwordInput = document.querySelector("#teacherPassword");
+  const password = passwordInput.value;
   const codeInput = normalizeRoomCode(document.querySelector("#teacherRoomCode").value);
   const code = codeInput || generateRoomCode();
   const selectedMode = getSelectedTeacherMode();
 
-  if (password !== TEACHER_PASSWORD) {
-    showToast("관리자 비밀번호가 맞지 않습니다.", "error");
+  if (!password) {
+    showToast("교사용 비밀번호를 입력해 주세요.", "error");
+    passwordInput.focus();
     return;
   }
 
+  const entryButtons = [document.querySelector("#teacherEnterBtn"), document.querySelector("#studentEnterBtn")];
+  state.teacherSigningIn = true;
+  entryButtons.forEach((button) => { button.disabled = true; });
   try {
+    try {
+      await authenticateTeacher(password);
+    } catch (error) {
+      showToast(teacherAuthenticationError(error), "error");
+      passwordInput.select();
+      return;
+    }
+    passwordInput.value = "";
     const snapshot = await get(roomRef(code));
     if (!snapshot.exists()) {
       await set(roomRef(code), {
@@ -7935,8 +8050,42 @@ async function enterTeacher() {
     localStorage.setItem("wbq_roomCode", code);
     subscribeToRoom(code);
   } catch (error) {
+    endTeacherAuthentication();
     console.error(error);
     showToast("교사 화면을 여는 중 오류가 발생했습니다.", "error");
+  } finally {
+    state.teacherSigningIn = false;
+    entryButtons.forEach((button) => { button.disabled = false; });
+  }
+}
+
+async function authenticateTeacher(password) {
+  const { initializeAuth, inMemoryPersistence, signInWithEmailAndPassword } =
+    await import("https://www.gstatic.com/firebasejs/10.12.5/firebase-auth.js");
+  if (!teacherAuth) teacherAuth = initializeAuth(firebaseApp, { persistence: inMemoryPersistence });
+  await signInWithEmailAndPassword(teacherAuth, TEACHER_ACCOUNT_EMAIL, password);
+}
+
+function endTeacherAuthentication() {
+  if (teacherAuth?.currentUser) teacherAuth.signOut().catch(() => {});
+}
+
+function teacherAuthenticationError(error) {
+  switch (error?.code) {
+    case "auth/invalid-credential":
+    case "auth/invalid-login-credentials":
+    case "auth/wrong-password":
+    case "auth/user-not-found":
+      return "교사용 비밀번호를 확인해 주세요.";
+    case "auth/operation-not-allowed":
+    case "auth/configuration-not-found":
+      return "Firebase의 이메일/비밀번호 로그인이 설정되어 있는지 확인해 주세요.";
+    case "auth/user-disabled":
+      return "Firebase에서 교사용 계정이 비활성화되어 있습니다.";
+    case "auth/too-many-requests":
+      return "로그인 시도가 너무 많습니다. 잠시 후 다시 시도해 주세요.";
+    default:
+      return "교사용 로그인을 확인하지 못했습니다. 인터넷 연결을 확인한 뒤 다시 시도해 주세요.";
   }
 }
 
@@ -9541,6 +9690,7 @@ function subscribeToRoom(code) {
   state.unsubscribeRoom = onValue(roomRef(code), (snapshot) => {
     state.room = snapshot.val();
     if (state.role === "display") {
+      updateClassroomSound(state.room);
       renderDisplayRoute(true);
       return;
     }
@@ -9567,6 +9717,7 @@ function subscribeToRoom(code) {
       return;
     }
     renderStudentRoute();
+    syncPlaygroundStudentProfile();
   }, (error) => {
     console.error(error);
     showToast("방 정보를 실시간으로 불러오지 못했습니다.", "error");
@@ -9713,6 +9864,7 @@ function getStudents() {
     .map(([id, value]) => ({
       id,
       name: value.name,
+      avatarId: value.avatarId,
       score: Number(value.score || 0),
       connected: Boolean(value.connected),
       joinedAt: value.joinedAt || 0
@@ -11383,7 +11535,7 @@ function renderGhostBingoLeaderboard() {
       ${ranking.slice(0, 5).map((ghost, index) => `
         <div class="ranking-row rank-${index + 1}">
           <span class="rank-medal">${index + 1}</span>
-          <strong>${escapeHtml(ghost.name)}</strong>
+          <strong>${renderPlaygroundName(ghost)}</strong>
           <span class="score">${ghost.bingoLines}빙고 · ${ghost.checkedCount}칸</span>
         </div>
       `).join("")}
@@ -11694,7 +11846,7 @@ function renderLiarVoteResults() {
         const width = Math.max(4, Math.round((row.votes / maxVotes) * 100));
         return `
           <div class="bar-row">
-            <strong>${row.rank}위 ${escapeHtml(row.name)}</strong>
+            <strong class="playground-ranked-name"><span>${row.rank}위</span>${renderPlaygroundName(row)}</strong>
             <div class="bar-track">
               <div class="bar-fill choice-${(row.rank - 1) % 4}" style="width:${width}%"></div>
             </div>
@@ -11988,7 +12140,7 @@ function renderStudentList(students) {
       ${students.map((student) => `
         <li class="list-row">
           <div class="student-line">
-            <span><span class="dot ${student.connected ? "on" : ""}"></span> ${escapeHtml(student.name)}</span>
+            <span class="student-connection"><span class="dot ${student.connected ? "on" : ""}" aria-label="${student.connected ? "접속 중" : "연결 끊김"}"></span>${renderPlaygroundName(student)}</span>
             <strong>${student.score}점</strong>
           </div>
         </li>
@@ -12056,7 +12208,7 @@ function renderRanking(rows, scoreField = "score") {
       ${rows.map((row, index) => `
         <div class="ranking-row rank-${index + 1}">
           <span class="rank-medal">${index + 1}</span>
-          <strong>${escapeHtml(row.name || "이름 없음")}</strong>
+          <strong>${renderPlaygroundName(row)}</strong>
           <span class="score">${Number(row[scoreField] || 0)}점</span>
         </div>
       `).join("")}
@@ -12064,12 +12216,13 @@ function renderRanking(rows, scoreField = "score") {
   `;
 }
 
-function renderPodium(student, place, className) {
+function renderPodium(student, place, className, unit = "점") {
   return `
     <div class="podium ${className}">
       <div class="podium-place">${place}위</div>
+      ${student ? renderPlaygroundAvatar(student.id || student.studentId, student.avatarId, "podium-avatar") : ""}
       <h2>${student ? escapeHtml(student.name) : "-"}</h2>
-      <p class="score">${student ? Number(student.score || 0) : 0}점</p>
+      <p class="score">${student ? Number(student.score || 0) : 0}${unit}</p>
     </div>
   `;
 }
@@ -12085,10 +12238,300 @@ function setView(viewName, html, afterRender = null, force = false) {
 
   clearTimer();
   state.activeView = viewName;
+  setPlaygroundTheme();
   appEl.innerHTML = html;
   if (typeof afterRender === "function") {
     afterRender();
   }
+}
+
+function setPlaygroundTheme() {
+  if (!appEl.dataset) return;
+  appEl.dataset.playgroundRole = state.role || "home";
+  appEl.dataset.playgroundMode = state.room ? getRoomMode() : "";
+}
+
+function getPlaygroundAvatar(avatarId) {
+  return PLAYGROUND_AVATARS.find(([id]) => id === avatarId) || PLAYGROUND_AVATARS[0];
+}
+
+function renderPlaygroundAvatar(studentId, avatarId, className = "") {
+  const [id] = getPlaygroundAvatar(avatarId || state.room?.students?.[studentId]?.avatarId);
+  return `<img class="playground-avatar ${className}" src="./assets/avatars/${id}.webp" alt="" width="40" height="40" decoding="async" />`;
+}
+
+function renderPlaygroundName(student, name = student.name || student.playerName || "이름 없음") {
+  const id = student.studentId || student.playerId || student.participantId || student.id;
+  return `<span class="playground-name">${renderPlaygroundAvatar(id, student.avatarId)}<span>${escapeHtml(name)}</span></span>`;
+}
+
+function canChoosePlaygroundAvatar(room = state.room) {
+  return Boolean(room && ["waiting", "collecting", "memoryReady"].includes(room.status));
+}
+
+function bindPlaygroundAvatarPicker() {
+  const profile = document.querySelector("#studentProfile");
+  const picker = document.querySelector("#avatarPicker");
+  profile?.addEventListener("click", (event) => {
+    if (event.target.closest("[data-open-avatar-picker]")) openPlaygroundAvatarPicker();
+  });
+  picker?.addEventListener("click", (event) => {
+    const choice = event.target.closest("[data-avatar-choice]");
+    if (choice) picker.querySelectorAll("[data-avatar-choice]").forEach((button) => {
+      button.setAttribute("aria-pressed", String(button === choice));
+    });
+    if (event.target.closest("[data-cancel-avatar]")) picker.close();
+    if (event.target.closest("[data-save-avatar]")) savePlaygroundAvatar(picker);
+  });
+}
+
+function syncPlaygroundStudentProfile() {
+  const profile = document.querySelector("#studentProfile");
+  const picker = document.querySelector("#avatarPicker");
+  const student = state.role === "student" ? state.room?.students?.[state.studentId] : null;
+  if (!profile) return;
+  if (!student) {
+    profile.hidden = true;
+    profile.replaceChildren();
+    delete profile.dataset.signature;
+    if (picker?.open) picker.close();
+    return;
+  }
+  const canChoose = canChoosePlaygroundAvatar();
+  const signature = JSON.stringify([state.roomCode, student.name, student.avatarId, canChoose]);
+  profile.hidden = false;
+  if (profile.dataset.signature !== signature) {
+    profile.dataset.signature = signature;
+    profile.innerHTML = `<div class="student-profile-inner">
+      <strong>${renderPlaygroundName({ id: state.studentId, ...student })}</strong>
+      <span class="student-profile-room">방 ${escapeHtml(state.roomCode)}</span>
+      ${canChoose ? '<button type="button" class="btn ghost" data-open-avatar-picker>캐릭터 바꾸기</button>' : ""}
+    </div>`;
+  }
+  if (!canChoose && picker?.open) picker.close();
+  if (canChoose && !student.avatarId && state.avatarPromptedRoom !== state.roomCode && picker?.showModal) {
+    state.avatarPromptedRoom = state.roomCode;
+    openPlaygroundAvatarPicker();
+  }
+}
+
+function openPlaygroundAvatarPicker() {
+  const picker = document.querySelector("#avatarPicker");
+  if (!picker?.showModal || picker.open || state.role !== "student" || !canChoosePlaygroundAvatar()) return;
+  const [selectedId] = getPlaygroundAvatar(state.room?.students?.[state.studentId]?.avatarId);
+  picker.innerHTML = `
+    <header><h2 id="avatarPickerTitle">내 캐릭터 고르기</h2></header>
+    <div class="avatar-grid" role="group" aria-label="캐릭터 20종">
+      ${PLAYGROUND_AVATARS.map(([id, label]) => `<button type="button" class="avatar-choice" data-avatar-choice="${id}" aria-pressed="${id === selectedId}">
+        ${renderPlaygroundAvatar(null, id)}<span>${label}</span>
+      </button>`).join("")}
+    </div>
+    <footer class="button-row"><button type="button" class="btn ghost" data-cancel-avatar>나중에</button><button type="button" class="btn primary" data-save-avatar>이 캐릭터 선택</button></footer>`;
+  picker.showModal();
+}
+
+async function savePlaygroundAvatar(picker) {
+  const avatarId = picker.querySelector('[data-avatar-choice][aria-pressed="true"]')?.dataset.avatarChoice;
+  const save = picker.querySelector("[data-save-avatar]");
+  if (save.disabled || state.role !== "student" || !canChoosePlaygroundAvatar()
+    || !PLAYGROUND_AVATARS.some(([id]) => id === avatarId)) return;
+  const { roomCode, studentId } = state;
+  save.disabled = true;
+  try {
+    const result = await runTransaction(roomRef(roomCode), (room) => {
+      if (!canChoosePlaygroundAvatar(room) || !room.students?.[studentId]) return;
+      room.students[studentId].avatarId = avatarId;
+      return room;
+    }, { applyLocally: false });
+    if (state.roomCode !== roomCode || state.role !== "student") return;
+    if (result.committed) {
+      if (picker.open) picker.close();
+      showToast("캐릭터를 선택했습니다.", "success");
+    } else {
+      showToast("게임 진행 중에는 캐릭터를 바꿀 수 없습니다.", "error");
+    }
+  } catch (error) {
+    console.error(error);
+    if (state.roomCode === roomCode) showToast("캐릭터를 저장하지 못했습니다. 다시 시도해 주세요.", "error");
+  } finally {
+    save.disabled = false;
+  }
+}
+
+function renderPlaygroundLobby() {
+  const students = getStudents().filter((student) => student.connected);
+  return `<section class="playground-lobby">
+    <div class="playground-lobby-code"><span>방 코드</span><strong>${escapeHtml(state.roomCode)}</strong></div>
+    <div class="playground-lobby-players">
+      <h2>입장한 학생 <span>${students.length}명</span></h2>
+      <ul class="playground-roster">${students.map((student) => `<li>${renderPlaygroundName(student)}</li>`).join("")}</ul>
+    </div>
+  </section>`;
+}
+
+function bindClassroomSound() {
+  const controls = document.querySelector("#classroomSound");
+  if (!controls) return;
+  try {
+    const savedMode = localStorage.getItem("pgClassroomSoundMode");
+    if (savedMode === "music") classroomAudio.preference = savedMode;
+    const savedVolume = localStorage.getItem("pgClassroomSoundVolume");
+    if (savedVolume !== null && Number.isFinite(Number(savedVolume))) {
+      classroomAudio.volume = Math.min(1, Math.max(0, Number(savedVolume)));
+    }
+  } catch {}
+  controls.innerHTML = `
+    <button type="button" class="btn ghost" id="classroomSoundToggle" aria-pressed="false">${renderPlaygroundToolIcon("speaker")}<span>소리 켜기</span></button>
+    <label><span class="visually-hidden">교실 사운드 방식</span><select id="classroomSoundMode" disabled><option value="effects">효과음만</option><option value="music">음악+효과음</option></select></label>
+    <label class="classroom-volume"><span>음량</span><input type="range" id="classroomSoundVolume" min="0" max="100" step="5" aria-label="교실 소리 음량" /></label>
+    ${document.fullscreenEnabled ? `<button type="button" class="btn ghost" id="classroomFullscreen">${renderPlaygroundToolIcon("fullscreen")}전체 화면</button>` : ""}`;
+  const toggle = controls.querySelector("#classroomSoundToggle");
+  const mode = controls.querySelector("#classroomSoundMode");
+  const volume = controls.querySelector("#classroomSoundVolume");
+  mode.value = classroomAudio.preference;
+  volume.value = String(classroomAudio.volume * 100);
+  controls.hidden = false;
+  toggle.addEventListener("click", async () => {
+    toggle.disabled = true;
+    try {
+      if (!classroomAudio.enabled) {
+        const AudioContext = window.AudioContext || window.webkitAudioContext;
+        if (!AudioContext) throw new Error("Web Audio is unavailable");
+        if (!classroomAudio.context) {
+          const context = new AudioContext();
+          classroomAudio.context = context;
+          classroomAudio.gain = context.createGain();
+          classroomAudio.musicGain = context.createGain();
+          classroomAudio.musicGain.connect(classroomAudio.gain);
+          classroomAudio.gain.connect(context.destination);
+        }
+        await classroomAudio.context.resume();
+        classroomAudio.enabled = true;
+      } else {
+        classroomAudio.enabled = false;
+      }
+      toggle.setAttribute("aria-pressed", String(classroomAudio.enabled));
+      toggle.querySelector("span").textContent = classroomAudio.enabled ? "소리 끄기" : "소리 켜기";
+      mode.disabled = !classroomAudio.enabled;
+      syncClassroomMusic();
+    } catch (error) {
+      console.error(error);
+      showToast("소리를 켤 수 없습니다. 브라우저의 소리 설정을 확인해 주세요.", "error");
+    } finally {
+      toggle.disabled = false;
+    }
+  });
+  mode.addEventListener("change", () => {
+    classroomAudio.preference = mode.value;
+    try { localStorage.setItem("pgClassroomSoundMode", mode.value); } catch {}
+    syncClassroomMusic();
+  });
+  volume.addEventListener("input", () => {
+    classroomAudio.volume = Number(volume.value) / 100;
+    try { localStorage.setItem("pgClassroomSoundVolume", String(classroomAudio.volume)); } catch {}
+    applyClassroomVolume();
+  });
+  controls.querySelector("#classroomFullscreen")?.addEventListener("click", async () => {
+    try {
+      if (document.fullscreenElement) await document.exitFullscreen();
+      else await document.documentElement.requestFullscreen();
+    } catch {
+      showToast("현재 창에서 전체 화면을 사용할 수 없습니다.", "error");
+    }
+  });
+}
+
+function renderPlaygroundToolIcon(icon) {
+  // Lucide Volume 2 and Maximize.
+  const paths = icon === "speaker"
+    ? '<path d="M11 5 6 9H3v6h3l5 4V5Z"/><path d="M15.54 8.46a5 5 0 0 1 0 7.08M19.07 4.93a10 10 0 0 1 0 14.14"/>'
+    : '<path d="M8 3H5a2 2 0 0 0-2 2v3m18 0V5a2 2 0 0 0-2-2h-3m0 18h3a2 2 0 0 0 2-2v-3M3 16v3a2 2 0 0 0 2 2h3"/>';
+  return `<svg aria-hidden="true" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">${paths}</svg>`;
+}
+
+function getClassroomSoundPhase(room, mode) {
+  const status = room?.status || "";
+  const round = mode === "quiz" ? room?.currentQuestionIndex
+    : mode === "compliment" ? room?.currentComplimentIndex
+    : mode === "catchmind" ? room?.catchmind?.currentRoundIndex
+    : mode === "mafia" ? room?.mafia?.round : "";
+  return [mode, status, round ?? ""].join(":");
+}
+
+function getClassroomSoundCue(mode, status, previousStatus) {
+  if (status === "finished") return "finish";
+  if (status === "result" && mode === "word") return "close";
+  if (["result", "authorReveal", "roleRevealDead", "finalReveal"].includes(status)) return "reveal";
+  if (status === "memoryAwaitingResults") return "close";
+  if (["playing", "bingoPlaying", "memoryCountdown", "voting"].includes(status)) return "start";
+  if (status === "seatSelection" && previousStatus === "waiting") return "start";
+  return "";
+}
+
+function updateClassroomSound(room) {
+  const previousStatus = classroomAudio.room?.status;
+  const mode = room ? getRoomMode() : "";
+  const nextPhase = getClassroomSoundPhase(room, mode);
+  const changed = classroomAudio.phase && classroomAudio.phase !== nextPhase;
+  classroomAudio.phase = nextPhase;
+  classroomAudio.room = room;
+  syncClassroomMusic();
+  if (!room || !changed || !classroomAudio.enabled) return;
+  const cue = getClassroomSoundCue(mode, room.status, previousStatus);
+  const notes = {
+    start: [[392, 0, 0.14], [587, 0.11, 0.22]],
+    close: [[440, 0, 0.14], [294, 0.13, 0.24]],
+    reveal: [[523, 0, 0.18], [659, 0.1, 0.19], [784, 0.19, 0.28]],
+    finish: [[392, 0, 0.22], [523, 0.19, 0.24], [659, 0.39, 0.25], [784, 0.59, 0.57], [523, 0.59, 0.48]]
+  };
+  (notes[cue] || []).forEach(([note, delay, length]) => playClassroomNote(note, delay, length, 0.17));
+}
+
+function applyClassroomVolume() {
+  const { context, gain, enabled, volume } = classroomAudio;
+  if (context && gain) gain.gain.setTargetAtTime(enabled ? volume : 0, context.currentTime, 0.03);
+}
+
+function syncClassroomMusic() {
+  const { context, musicGain, enabled, room, preference, interval } = classroomAudio;
+  if (!context) return;
+  applyClassroomVolume();
+  const shouldPlay = Boolean(enabled && preference === "music" && canChoosePlaygroundAvatar(room));
+  const musicVolume = shouldPlay ? 1 : 0;
+  musicGain.gain.setTargetAtTime(musicVolume, context.currentTime, 0.05);
+  if (shouldPlay && interval === null) {
+    const playBar = () => {
+      [262, 330, 392, 330, 294, 349, 440, 349].forEach((frequency, index) => {
+        playClassroomNote(frequency, index * 0.48, 0.44, 0.055, musicGain);
+      });
+    };
+    playBar();
+    classroomAudio.interval = window.setInterval(playBar, 3840);
+  } else if (!shouldPlay && interval !== null) {
+    window.clearInterval(interval);
+    classroomAudio.interval = null;
+  }
+}
+
+function playClassroomNote(frequency, delay, length, level, output = classroomAudio.gain) {
+  const context = classroomAudio.context;
+  if (!context || !output || context.state !== "running") return;
+  const start = context.currentTime + delay;
+  const oscillator = context.createOscillator();
+  const envelope = context.createGain();
+  oscillator.type = "triangle";
+  oscillator.frequency.value = frequency;
+  envelope.gain.setValueAtTime(0.001, start);
+  envelope.gain.exponentialRampToValueAtTime(level, start + 0.025);
+  envelope.gain.exponentialRampToValueAtTime(0.001, start + length);
+  oscillator.connect(envelope);
+  envelope.connect(output);
+  oscillator.start(start);
+  oscillator.stop(start + length);
+  oscillator.onended = () => {
+    oscillator.disconnect();
+    envelope.disconnect();
+  };
 }
 
 function startTimer({ startedAt, limit, textSelector, fillSelector, onEnd }) {

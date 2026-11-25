@@ -180,7 +180,7 @@ function useRoom(room) {
 
   const css = fs.readFileSync(stylePath, "utf8");
   assert.match(css, /\.mode-options\s*\{[^}]*grid-template-columns:\s*repeat\(3,/s, "home game modes must use three columns for nine games");
-  assert.equal((source.match(/input type="radio" name="teacherMode" value=/g) || []).length, 9, "the home screen must expose nine game modes");
+  assert.equal(vm.runInContext("PLAYGROUND_MODE_MARKS.length", sandbox), 9, "the home screen must expose nine game modes");
   const rules = JSON.parse(fs.readFileSync(rulesPath, "utf8"));
   assert.match(rules.rules.rooms.$roomCode.mode[".validate"], /bingo/);
   assert.match(rules.rules.rooms.$roomCode.status[".validate"], /bingoPlaying/);

@@ -4,11 +4,16 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>동명중학교 PLAYGROUND</title>
-    <link rel="stylesheet" href="./style.css?v=20260908-word-review-fix" />
+    <meta name="theme-color" content="#194f3e" />
+    <link rel="stylesheet" href="./style.css?v=20261125" />
+    <link rel="stylesheet" href="./playground.css?v=20261125" />
   </head>
   <body>
-    <main id="app" class="app-shell" aria-live="polite"></main>
+    <header id="studentProfile" class="student-profile" hidden></header>
+    <div id="classroomSound" class="classroom-sound" hidden></div>
+    <main id="app" class="app-shell"></main>
+    <dialog id="avatarPicker" class="avatar-picker" aria-labelledby="avatarPickerTitle"></dialog>
     <div id="toast" class="toast" role="status" aria-live="polite"></div>
-    <script type="module" src="./app.js?v=20260908-word-review-fix"></script>
+    <script type="module" src="./app.js?v=20261126"></script>
   </body>
 </html>
