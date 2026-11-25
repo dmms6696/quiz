@@ -1,4 +1,4 @@
-﻿import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.5/firebase-app.js";
+import { initializeApp } from "https://www.gstatic.com/firebasejs/12.15.0/firebase-app.js";
 import {
   getDatabase,
   ref,
@@ -10,7 +10,7 @@ import {
   remove,
   runTransaction,
   serverTimestamp
-} from "https://www.gstatic.com/firebasejs/10.12.5/firebase-database.js";
+} from "https://www.gstatic.com/firebasejs/12.15.0/firebase-database.js";
 
 // =========================
 // 수업용 기본 설정
@@ -8061,7 +8061,7 @@ async function enterTeacher() {
 
 async function authenticateTeacher(password) {
   const { initializeAuth, inMemoryPersistence, signInWithEmailAndPassword } =
-    await import("https://www.gstatic.com/firebasejs/10.12.5/firebase-auth.js");
+    await import("https://www.gstatic.com/firebasejs/12.15.0/firebase-auth.js");
   if (!teacherAuth) teacherAuth = initializeAuth(firebaseApp, { persistence: inMemoryPersistence });
   await signInWithEmailAndPassword(teacherAuth, TEACHER_ACCOUNT_EMAIL, password);
 }
@@ -8071,7 +8071,11 @@ function endTeacherAuthentication() {
 }
 
 function teacherAuthenticationError(error) {
-  switch (error?.code) {
+  const code = error?.code || "";
+  if (code.startsWith("auth/requests-from-referer-")) {
+    return "Firebase 웹 키가 이 사이트의 로그인을 차단했습니다. Google Cloud에서 사이트 주소가 허용되어 있는지 확인해 주세요.";
+  }
+  switch (code) {
     case "auth/invalid-credential":
     case "auth/invalid-login-credentials":
     case "auth/wrong-password":
@@ -8084,8 +8088,16 @@ function teacherAuthenticationError(error) {
       return "Firebase에서 교사용 계정이 비활성화되어 있습니다.";
     case "auth/too-many-requests":
       return "로그인 시도가 너무 많습니다. 잠시 후 다시 시도해 주세요.";
+    case "auth/app-not-authorized":
+    case "auth/unauthorized-domain":
+    case "auth/api-key-service-blocked":
+    case "auth/invalid-api-key":
+      return "Firebase 인증 요청이 차단되었습니다. 웹 키의 사이트 및 인증 API 제한을 확인해 주세요.";
+    case "auth/network-request-failed":
+    case "auth/timeout":
+      return "Firebase 인증 서버에 연결하지 못했습니다. 인터넷 연결을 확인한 뒤 다시 시도해 주세요.";
     default:
-      return "교사용 로그인을 확인하지 못했습니다. 인터넷 연결을 확인한 뒤 다시 시도해 주세요.";
+      return "교사용 로그인에 실패했습니다. 잠시 후 다시 시도해 주세요.";
   }
 }
 
