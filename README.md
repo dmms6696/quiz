@@ -28,6 +28,11 @@ project-root/
 ├─ outputs/
 │  ├─ index.html
 │  ├─ style.css
+│  ├─ playground.css
+│  ├─ arcade.css               # 아케이드 화면과 게임별 테마
+│  ├─ assets/
+│  │  ├─ avatars/              # 학생 선택 캐릭터 20종
+│  │  └─ redesign/             # 화면에 사용하는 게임·상태 일러스트
 │  ├─ app.js
 │  ├─ firebase-rules.json
 │  └─ README.md

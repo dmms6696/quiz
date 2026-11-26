@@ -78,11 +78,16 @@ const lobby = {
 const round = { settings: lobby.wordChallenge.settings, gameId: "test-round", startedAt: Date.now(), submissions: {}, claims: {} };
 const imageIsLoaded = (image) => image.complete && image.naturalWidth > 0;
 const screenshotDir = process.env.PLAYGROUND_SCREENSHOTS;
+const modes = ["quiz", "compliment", "mafia", "liar", "catchmind", "seat", "memory", "bingo", "word"];
 
 async function capture(page, name) {
   if (!screenshotDir) return;
   fs.mkdirSync(screenshotDir, { recursive: true });
   await page.screenshot({ path: path.join(screenshotDir, name + ".png"), animations: "disabled" });
+}
+
+async function assertNoHorizontalOverflow(page) {
+  assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), true);
 }
 
 async function configurePage(context) {
@@ -115,17 +120,37 @@ async function configurePage(context) {
   try {
     const phone = await browser.newContext({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true });
     const desktop = await browser.newContext({ viewport: { width: 1440, height: 900 } });
-    await Promise.all([configurePage(phone), configurePage(desktop)]);
+    const large = await browser.newContext({ viewport: { width: 1920, height: 1080 } });
+    await Promise.all([configurePage(phone), configurePage(desktop), configurePage(large)]);
     const student = await phone.newPage();
     const teacher = await desktop.newPage();
-    const display = await desktop.newPage();
+    const display = await large.newPage();
     const errors = [];
     [student, teacher, display].forEach((page) => page.on("pageerror", (error) => errors.push(error.message)));
     await Promise.all([student.goto(site), teacher.goto(site), display.goto(`${site}/?display=1&room=ROOM42`)]);
     await student.locator("#studentEnterBtn").waitFor();
     assert.equal(await student.locator('[name="teacherMode"]').count(), 9);
-    assert.equal(await student.evaluate(() => document.documentElement.scrollWidth), 390);
+    assert.equal(await student.locator(".arcade-game-tile").count(), 9);
+    assert.equal(await student.locator("#teacherPassword").isVisible(), false);
+    for (const width of [375, 390, 430, 768, 1024]) {
+      await student.setViewportSize({ width, height: 844 });
+      await assertNoHorizontalOverflow(student);
+      assert.ok((await student.locator("#studentEnterBtn").boundingBox()).y < 670);
+      if (width === 375 || width === 768) await capture(student, `home-${width}px`);
+    }
+    await student.setViewportSize({ width: 390, height: 844 });
+    await teacher.waitForFunction(() => [...document.querySelectorAll(".arcade-game-grid img")].every((img) => img.complete && img.naturalWidth > 0));
+    await assertNoHorizontalOverflow(teacher);
     await capture(teacher, "desktop-home");
+    await student.locator("#openTeacherEntryBtn").click();
+    await student.locator("#teacherPassword").fill("not a real password");
+    await student.keyboard.press("Escape");
+    await student.locator("#teacherEntryDialog").waitFor({ state: "hidden" });
+    assert.equal(await student.locator("#teacherPassword").inputValue(), "");
+    await student.locator("#studentRoomCode").fill("MISSING");
+    await student.locator("#studentName").fill("자동 테스트");
+    await student.locator("#studentEnterBtn").click();
+    await student.locator('#toast.show[data-illustration="room-not-found"]').waitFor();
     await student.locator("#studentRoomCode").fill("ROOM42");
     await student.locator("#studentName").fill("자동 테스트");
     await student.locator("#studentEnterBtn").click();
@@ -173,6 +198,7 @@ async function configurePage(context) {
     await display.waitForFunction(() => [...document.querySelectorAll(".playground-roster img")].every((img) => img.complete && img.naturalWidth > 0));
     assert.equal(await display.locator(".playground-roster li").filter({ hasText: "자동 테스트" }).locator("img").evaluate(imageIsLoaded), true);
     assert.match(await display.locator(".playground-roster li").filter({ hasText: "자동 테스트" }).locator("img").getAttribute("src"), /20_book_otter/);
+    await assertNoHorizontalOverflow(display);
     await capture(display, "classroom-lobby");
     await display.getByRole("button", { name: "소리 켜기" }).click();
     await display.getByRole("button", { name: "소리 끄기" }).waitFor();
@@ -184,7 +210,8 @@ async function configurePage(context) {
     await student.evaluate((room) => window.__deliverRoom(room), playingRoom);
     await display.evaluate((room) => window.__deliverRoom(room), playingRoom);
     await display.locator(".word-display-play").waitFor();
-    assert.equal(await display.locator(".word-display-play .word-chosung").innerText(), "ㅅㄱ");
+    assert.equal(await display.locator(".word-display-play .word-chosung").textContent(), "ㅅㄱ");
+    assert.equal(await display.locator(".word-display-play .arcade-jamo > span").count(), 2);
     assert.equal(await display.evaluate(() => window.__playedNotes), lobbyNotes + 2);
     await display.evaluate((room) => window.__deliverRoom(room), playingRoom);
     assert.equal(await display.evaluate(() => window.__playedNotes), lobbyNotes + 2, "same-phase updates must not replay audio");
@@ -201,9 +228,11 @@ async function configurePage(context) {
     const studentRoom = await student.evaluate(() => window.__database.rooms.ROOM42);
     assert.equal(Object.values(studentRoom.wordChallenge.submissions).every((word) => word.status === "pending"), true);
 
+    await teacher.locator("#openTeacherEntryBtn").click();
     await teacher.locator("#teacherPassword").fill(randomUUID());
     await teacher.locator("#teacherRoomCode").fill("ROOM42");
-    await teacher.locator('[data-mode="word"]').click();
+    await teacher.locator('#teacherEntryDialog [data-mode="word"]').click();
+    await capture(teacher, "desktop-teacher-entry");
     await teacher.locator("#teacherEnterBtn").click();
     await teacher.getByText("교사용 비밀번호를 확인해 주세요.", { exact: true }).waitFor();
     assert.equal(await teacher.locator("#wordChosungInput").count(), 0);
@@ -239,15 +268,65 @@ async function configurePage(context) {
     const sorted = display.locator(".ranking-row").filter({ hasText: "자동 테스트" });
     await sorted.waitFor();
     assert.match(await sorted.locator("img").getAttribute("src"), /20_book_otter/);
-    assert.match(await display.locator(".podium.first img").getAttribute("src"), /20_book_otter/);
+    assert.match(await display.locator(".podium.first .podium-avatar").getAttribute("src"), /20_book_otter/);
     await capture(display, "classroom-result");
     await display.getByRole("button", { name: "소리 끄기" }).click();
     await display.getByRole("button", { name: "소리 켜기" }).waitFor();
     await teacher.locator("#backHomeBtn").click();
     await teacher.waitForFunction(() => window.__teacherSignedIn === false);
     assert.equal(await student.evaluate(() => window.__teacherAttempts), 0);
+
+    for (const mode of modes) {
+      const newCode = `GAME${mode.slice(0, 4).toUpperCase()}`;
+      await teacher.locator("#openTeacherEntryBtn").click();
+      await teacher.locator("#teacherPassword").fill(testTeacherInput);
+      await teacher.locator("#teacherRoomCode").fill(newCode);
+      await teacher.locator(`#teacherEntryDialog [data-mode="${mode}"]`).click();
+      await teacher.locator("#teacherEnterBtn").click();
+      await teacher.locator(`#app[data-playground-role="teacher"][data-playground-mode="${mode}"]`).waitFor();
+      const newRoom = await teacher.evaluate((code) => window.__database.rooms[code], newCode);
+      assert.ok(newRoom);
+      assert.equal(newRoom.status, "waiting");
+      await teacher.locator("#backHomeBtn").click();
+
+      await student.evaluate((room) => window.__deliverRoom(room), { ...newRoom, students: currentRoom.students });
+      await student.locator(`#app[data-playground-role="student"][data-playground-mode="${mode}"]`).waitFor();
+      await assertNoHorizontalOverflow(student);
+      await display.evaluate((room) => window.__deliverRoom(room), { ...newRoom, students: currentRoom.students });
+      const banner = display.locator(`.arcade-display-header img[src$="games/${mode}/banner.webp"]`);
+      await banner.waitFor();
+      await display.waitForFunction((segment) => Array.from(document.images).some((img) => img.src.endsWith(segment) && img.complete && img.naturalWidth > 0), `games/${mode}/banner.webp`);
+      await assertNoHorizontalOverflow(display);
+      assert.equal(await display.locator(".arcade-role-layout, #showLiarWordBtn").count(), 0);
+    }
+
+    const secretAnswer = "푸른 시간표";
+    const longQuizRoom = {
+      ...currentRoom, mode: "quiz", gameVariant: null, status: "playing", currentQuestionIndex: 0,
+      questionStartedAt: Date.now(), timeLimit: 60,
+      questions: { quiz1: { type: "short", authorName: "출제 학생", question: "이 문제의 아주 긴 지문을 천천히 읽어 보세요. ".repeat(5), correctAnswer: secretAnswer } }
+    };
+    await student.evaluate((room) => window.__deliverRoom(room), longQuizRoom);
+    await display.evaluate((room) => window.__deliverRoom(room), longQuizRoom);
+    await student.locator("#shortAnswerInput").waitFor();
+    assert.equal(await display.getByText(secretAnswer, { exact: false }).count(), 0);
+    assert.equal(await student.getByText(secretAnswer, { exact: false }).count(), 0);
+    await assertNoHorizontalOverflow(student);
+    await assertNoHorizontalOverflow(display);
+    await capture(student, "mobile-quiz-long");
+
+    const mafiaRoom = {
+      ...currentRoom, mode: "mafia", gameVariant: null, status: "roleAssigned",
+      mafia: { students: { [studentId]: { role: "doctor", name: "자동 테스트", alive: true } } }
+    };
+    await student.evaluate((room) => window.__deliverRoom(room), mafiaRoom);
+    await display.evaluate((room) => window.__deliverRoom(room), mafiaRoom);
+    await student.locator('.arcade-role-layout img[src$="roles/doctor.webp"]').waitFor();
+    assert.equal(await display.locator('img[src*="/roles/"]').count(), 0);
+    assert.equal(await display.getByText("당신은 의사입니다.").count(), 0);
+    await capture(student, "mobile-mafia-role");
     assert.deepEqual(errors, []);
-    console.log("Playground browser tests passed (teacher authentication, 20 avatars, 17-person lobby, word review, sound, final results)");
+    console.log("Playground browser tests passed (5 widths, 9 room creation/display routes, teacher authentication, avatar race, 17-person lobby, word review, sound, final results, private quiz and mafia views)");
   } finally {
     await browser.close();
   }

@@ -6,7 +6,7 @@ const vm = require("node:vm");
 const projectRoot = path.join(__dirname, "..");
 const sourceRoot = fs.existsSync(path.join(projectRoot, "outputs", "app.js")) ? path.join(projectRoot, "outputs") : projectRoot;
 const appPath = path.join(sourceRoot, "app.js");
-const stylePath = path.join(sourceRoot, "style.css");
+const stylePath = path.join(sourceRoot, "arcade.css");
 const rulesPath = path.join(sourceRoot, "firebase-rules.json");
 let source = fs.readFileSync(appPath, "utf8").replace(/^\uFEFF/, "");
 source = source.replace(/^import[\s\S]*?firebase-database\.js";\s*/, "").replace("bootApp();", "");
@@ -177,10 +177,11 @@ function useRoom(room) {
   const preview = vm.runInContext(`renderBingoBoard(getMyBingoBoard(), { teacher: true })`, sandbox);
   assert.match(preview, /개념 1/);
   assert.match(preview, /data-bingo-teacher-unmark/);
+  assert.equal((preview.match(/is-line/g) || []).length, 5, "only cells in a completed row or column get the line highlight");
 
   const css = fs.readFileSync(stylePath, "utf8");
-  assert.match(css, /\.mode-options\s*\{[^}]*grid-template-columns:\s*repeat\(3,/s, "home game modes must use three columns for nine games");
-  assert.equal(vm.runInContext("PLAYGROUND_MODE_MARKS.length", sandbox), 9, "the home screen must expose nine game modes");
+  assert.match(css, /\.arcade-game-grid\s*\{[^}]*grid-template-columns:\s*repeat\(3,/s, "wide home gallery must use three columns for nine games");
+  assert.equal(vm.runInContext("Object.keys(PLAYGROUND_MODE_ART).length", sandbox), 9, "the home screen must expose nine game modes");
   const rules = JSON.parse(fs.readFileSync(rulesPath, "utf8"));
   assert.match(rules.rules.rooms.$roomCode.mode[".validate"], /bingo/);
   assert.match(rules.rules.rooms.$roomCode.status[".validate"], /bingoPlaying/);

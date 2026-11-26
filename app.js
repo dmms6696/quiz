@@ -227,10 +227,17 @@ const PLAYGROUND_AVATARS = [
   ["13_pixel", "픽셀"], ["14_video", "비디오"], ["15_ai", "AI"], ["16_coding", "코딩"],
   ["17_drone", "드론"], ["18_sprout", "새싹"], ["19_blue_road", "푸른 물결"], ["20_book_otter", "책 읽는 수달"]
 ];
-const PLAYGROUND_MODE_MARKS = [
-  ["quiz", "Q"], ["compliment", "♥"], ["mafia", "◒"], ["liar", "?"],
-  ["catchmind", "✎"], ["seat", "↔"], ["memory", "▣"], ["bingo", "#"], ["word", "ㄱ"]
-];
+const PLAYGROUND_MODE_ART = {
+  quiz: { mark: "Q", thumbnail: [484, 322], banner: [696, 316] },
+  compliment: { mark: "♥", thumbnail: [490, 322], banner: [699, 319] },
+  mafia: { mark: "◒", thumbnail: [485, 322], banner: [696, 320] },
+  liar: { mark: "?", thumbnail: [484, 310], banner: [683, 189] },
+  catchmind: { mark: "✎", thumbnail: [490, 310], banner: [699, 320] },
+  seat: { mark: "↔", thumbnail: [485, 310], banner: [683, 192] },
+  memory: { mark: "▣", thumbnail: [484, 321], banner: [696, 327] },
+  bingo: { mark: "#", thumbnail: [490, 321], banner: [683, 184] },
+  word: { mark: "ㄱ", thumbnail: [485, 321], banner: [699, 327] }
+};
 const classroomAudio = {
   context: null, gain: null, musicGain: null, interval: null, room: null, phase: "",
   enabled: false, preference: "effects", volume: 0.45
@@ -330,6 +337,9 @@ bootApp();
 
 function bootApp() {
   bindPlaygroundAvatarPicker();
+  document.addEventListener("error", (event) => {
+    if (event.target?.classList?.contains("arcade-image")) event.target.hidden = true;
+  }, true);
   const params = new URLSearchParams(window.location.search);
   const isDisplay = params.get("display") === "1";
   const displayRoomCode = normalizeRoomCode(params.get("room") || "");
@@ -395,12 +405,18 @@ function renderHome() {
   const savedName = localStorage.getItem("wbq_studentName") || "";
 
   appEl.innerHTML = `
-    <section class="screen playground-home">
-      <header class="playground-masthead">
-        <div><h1>동명중학교 PLAYGROUND</h1>
-        <p class="lead">퀴즈, 칭찬, 추리, 게임이 모이는 우리 학교 플레이 공간</p></div>
-        ${renderPlaygroundAvatar("01_dongmyeong", "playground-mascot")}
+    <section class="screen arcade-home">
+      <header class="arcade-brand-row">
+        <div class="arcade-wordmark">${renderPlaygroundAvatar("01_dongmyeong")}<span>PLAYGROUND <b>ARCADE</b></span></div>
+        <button type="button" class="btn ghost" id="openTeacherEntryBtn">교사로 입장</button>
       </header>
+      <div class="arcade-banner">
+        <div class="arcade-banner-copy">
+          <p class="arcade-school">동명중학교</p>
+          <h1>PLAYGROUND</h1>
+          <p>퀴즈, 칭찬, 추리, 게임이 모이는 우리 학교 플레이 공간</p>
+        </div>
+      </div>
 
       ${db ? "" : `
         <div class="notice danger">
@@ -408,10 +424,11 @@ function renderHome() {
         </div>
       `}
 
-      <div class="grid-2 home-entry-grid">
-        <section class="panel playground-student-entry">
-          <div>
-            <h2>학생으로 입장</h2>
+      <div class="arcade-home-layout">
+        <section class="arcade-student-entry" aria-labelledby="arcadeStudentTitle">
+          <div class="arcade-entry-heading">
+            <h2 id="arcadeStudentTitle">학생으로 입장</h2>
+            ${renderArcadeArt("decor/controller", [204, 160], "arcade-entry-icon")}
           </div>
           <div class="form-grid">
             <div class="field">
@@ -426,14 +443,26 @@ function renderHome() {
           </div>
         </section>
 
-        <section class="panel playground-teacher-entry">
-          <div>
-            <h2>교사로 입장</h2>
-          </div>
+        <section class="arcade-library" aria-labelledby="arcadeLibraryTitle">
+          <div class="arcade-library-heading"><h2 id="arcadeLibraryTitle">게임 모음</h2><span>${Object.keys(PLAYGROUND_MODE_ART).length}개</span></div>
+          <ul class="arcade-game-grid">
+            ${Object.keys(PLAYGROUND_MODE_ART).map((mode) => `<li class="arcade-game-tile" data-mode="${mode}">
+              ${renderArcadeModeArt(mode, "thumbnail")}<strong>${modeLabel(mode)}</strong>
+            </li>`).join("")}
+          </ul>
+        </section>
+      </div>
+
+      <dialog id="teacherEntryDialog" class="arcade-teacher-dialog" aria-labelledby="teacherEntryTitle">
+        <section class="arcade-teacher-entry">
+          <header class="arcade-dialog-heading">
+            <h2 id="teacherEntryTitle">교사로 입장</h2>
+            <button id="closeTeacherEntryBtn" type="button" class="btn ghost arcade-close" aria-label="교사 입장 닫기">&times;</button>
+          </header>
           <div class="form-grid">
             <div class="field">
               <label for="teacherPassword">관리자 비밀번호</label>
-              <input id="teacherPassword" type="password" autocomplete="current-password" placeholder="비밀번호" />
+              <input id="teacherPassword" type="password" autocomplete="current-password" placeholder="비밀번호" autofocus />
             </div>
             <div class="field">
               <label for="teacherRoomCode">방 코드</label>
@@ -442,21 +471,22 @@ function renderHome() {
             <div class="field">
               <span class="label">게임 모드</span>
               <div class="mode-options">
-                ${PLAYGROUND_MODE_MARKS.map(([mode, mark]) => `
+                ${Object.keys(PLAYGROUND_MODE_ART).map((mode) => `
                   <label class="mode-tile" data-mode="${mode}">
                     <input type="radio" name="teacherMode" value="${mode}" ${mode === "quiz" ? "checked" : ""} />
-                    <span class="playground-mode-body"><b class="playground-mode-mark" aria-hidden="true">${mark}</b><strong>${modeLabel(mode)}</strong></span>
+                    <span class="playground-mode-body">${renderArcadeModeArt(mode, "thumbnail")}<strong>${modeLabel(mode)}</strong></span>
                   </label>
                 `).join("")}
               </div>
             </div>
+            <p id="teacherEntryStatus" class="arcade-dialog-status" role="status"></p>
             <div class="button-row">
               <button id="teacherEnterBtn" class="btn dark">교사 입장</button>
               <button id="newRoomCodeBtn" class="btn ghost" type="button">새 코드 넣기</button>
             </div>
           </div>
         </section>
-      </div>
+      </dialog>
     </section>
   `;
 
@@ -465,6 +495,27 @@ function renderHome() {
     document.querySelector(selector).addEventListener("keydown", (event) => {
       if (event.key === "Enter" && !event.isComposing && event.keyCode !== 229) enterStudent();
     });
+  });
+  const teacherDialog = document.querySelector("#teacherEntryDialog");
+  const clearTeacherEntry = () => {
+    teacherDialog.querySelector("#teacherPassword").value = "";
+    teacherDialog.querySelector("#teacherEntryStatus").textContent = "";
+  };
+  document.querySelector("#openTeacherEntryBtn").addEventListener("click", () => teacherDialog.showModal());
+  document.querySelector("#closeTeacherEntryBtn").addEventListener("click", () => {
+    if (state.teacherSigningIn) return;
+    clearTeacherEntry();
+    teacherDialog.close();
+  });
+  teacherDialog.addEventListener("cancel", (event) => {
+    if (state.teacherSigningIn) event.preventDefault();
+    else clearTeacherEntry();
+  });
+  teacherDialog.addEventListener("keydown", (event) => {
+    if (event.key === "Enter" && event.target.matches("#teacherPassword, #teacherRoomCode") && !event.isComposing && event.keyCode !== 229) {
+      event.preventDefault();
+      enterTeacher();
+    }
   });
   document.querySelector("#teacherEnterBtn").addEventListener("click", enterTeacher);
   document.querySelector("#newRoomCodeBtn").addEventListener("click", () => {
@@ -659,8 +710,11 @@ function renderStudentWaiting(force = false) {
       </div>
 
       <div class="panel">
-        <h2>문제가 제출되었습니다.</h2>
-        <p class="lead">선생님이 게임을 시작하면 퀴즈가 시작됩니다.</p>
+        <div class="arcade-feedback">
+          <div><h2>문제가 제출되었습니다.</h2>
+          <p class="lead">선생님이 게임을 시작하면 퀴즈가 시작됩니다.</p></div>
+          ${renderArcadeArt("mascots/waiting", [428, 370])}
+        </div>
         <div class="stats">
           <div class="stat">
             <span class="muted">제출된 문제</span>
@@ -1162,9 +1216,12 @@ function renderMafiaRoleReveal(force = false) {
       </div>
 
       <div class="panel mafia-panel role-reveal-card role-${escapeAttr(player.role)}">
-        <p class="eyebrow">다른 친구에게 보여 주지 마세요</p>
-        <h1>당신은 ${roleLabel(player.role)}입니다.</h1>
-        <p class="lead">${escapeHtml(roleDescription(player.role))}</p>
+        <div class="arcade-role-layout">
+          <div><p class="eyebrow">다른 친구에게 보여 주지 마세요</p>
+          <h1>당신은 ${roleLabel(player.role)}입니다.</h1>
+          <p class="lead">${escapeHtml(roleDescription(player.role))}</p></div>
+          ${["mafia", "police", "doctor", "citizen"].includes(player.role) ? renderArcadeArt(`games/mafia/roles/${player.role}`, [443, 520]) : ""}
+        </div>
         ${player.role === "mafia" ? `
           <div class="notice warn">
             <strong>같은 마피아</strong>
@@ -1700,8 +1757,11 @@ function renderStudentResult(force = false) {
       </div>
 
       <div class="panel">
-        <h2>${answerSummaryText(answer)}</h2>
-        <p class="lead">정답은 <strong>${questionType === "choice" ? `${question.correctIndex + 1}. ` : ""}${escapeHtml(correctText)}</strong> 입니다.</p>
+        <div class="arcade-feedback" data-correct="${Boolean(answer?.isCorrect)}">
+          <div><h2>${answerSummaryText(answer)}</h2>
+          <p class="lead">정답은 <strong>${questionType === "choice" ? `${question.correctIndex + 1}. ` : ""}${escapeHtml(correctText)}</strong> 입니다.</p></div>
+          ${answer?.isCorrect ? renderArcadeArt("mascots/correct", [252, 288]) : renderArcadeArt("mascots/studying", [262, 272])}
+        </div>
         ${answer ? `
           <div class="stats">
             <div class="stat">
@@ -1812,13 +1872,17 @@ function renderDisplayShell(viewName, title, subtitle, bodyHtml, afterRender = n
                   : "";
   setView(viewName, `
     <section class="screen display-stage ${modeClass}" data-stage="${escapeAttr(state.room?.status || "waiting")}">
-      <div class="display-header">
+      <div class="display-header arcade-display-header">
         <div>
           <p class="eyebrow">동명중학교 PLAYGROUND</p>
           <h1>${escapeHtml(title)}</h1>
           ${subtitle ? `<p class="lead">${escapeHtml(subtitle)}</p>` : ""}
         </div>
-        <span class="pill ${statusPillClass(state.room?.status || "waiting")}">${statusLabel(state.room?.status || "waiting")}</span>
+        <div class="arcade-display-status">
+          <span class="pill blue">방 ${escapeHtml(state.roomCode)}</span>
+          <span class="pill ${statusPillClass(state.room?.status || "waiting")}">${statusLabel(state.room?.status || "waiting")}</span>
+        </div>
+        ${renderArcadeModeArt(getRoomMode(), "banner", getMafiaArcadeScene())}
       </div>
       ${canChoosePlaygroundAvatar() ? renderPlaygroundLobby() : ""}
       ${bodyHtml}
@@ -4967,7 +5031,9 @@ function renderSeatStudentCard(game) {
   const eligibility = getSeatCardEligibility(card, state.studentId, game);
   return `
     <p class="eyebrow">내 카드</p>
-    <div class="seat-card-icon">${escapeHtml(definition.icon)}</div>
+    <div class="seat-card-icon">${["swap", "move", "randomSwap", "protect"].includes(card.type)
+      ? renderArcadeArt(`games/seat/cards/${card.type}`, [200, 316], "arcade-seat-art", definition.icon)
+      : escapeHtml(definition.icon)}</div>
     <h2>${escapeHtml(definition.name)}</h2>
     <p>${escapeHtml(definition.description)}</p>
     <span class="pill ${card.used ? "" : "green"}">${card.used ? "사용 완료" : "사용 가능"}</span>
@@ -6799,19 +6865,23 @@ function getBingoWinners() {
 }
 
 function countBingoLines(board) {
-  if (!board) return 0;
+  return getCompletedBingoLines(board).length;
+}
+
+function getCompletedBingoLines(board) {
+  if (!board) return [];
   const size = board.size || getBingoSize();
   const marked = (index) => Boolean(board.marks?.[String(index)] || board.marks?.[index]);
-  let lines = 0;
+  const lines = [];
   for (let row = 0; row < size; row += 1) {
-    if (Array.from({ length: size }, (_, column) => row * size + column).every(marked)) lines += 1;
+    lines.push(Array.from({ length: size }, (_, column) => row * size + column));
   }
   for (let column = 0; column < size; column += 1) {
-    if (Array.from({ length: size }, (_, row) => row * size + column).every(marked)) lines += 1;
+    lines.push(Array.from({ length: size }, (_, row) => row * size + column));
   }
-  if (Array.from({ length: size }, (_, index) => index * size + index).every(marked)) lines += 1;
-  if (Array.from({ length: size }, (_, index) => index * size + (size - index - 1)).every(marked)) lines += 1;
-  return lines;
+  lines.push(Array.from({ length: size }, (_, index) => index * size + index));
+  lines.push(Array.from({ length: size }, (_, index) => index * size + (size - index - 1)));
+  return lines.filter((line) => line.every(marked));
 }
 
 function renderBingoStudentRoute() {
@@ -6978,11 +7048,12 @@ function renderBingoTeacherDashboard(force = true) {
 
 function renderBingoBoard(board, { interactive = false, allowMark = false, teacher = false } = {}) {
   const size = board.size || getBingoSize();
+  const completedCells = new Set(getCompletedBingoLines(board).flat());
   return `<div class="bingo-board" style="--bingo-size:${size}">${board.cells.map((cell, index) => {
     const marked = Boolean(board.marks?.[String(index)]);
     const enabled = interactive && (allowMark || marked);
     const teacherAction = teacher && marked;
-    return `<button class="bingo-cell ${marked ? "is-marked" : ""}" type="button" ${enabled ? `data-bingo-cell="${index}"` : ""} ${teacherAction ? `data-bingo-teacher-unmark="${index}" data-bingo-student="${escapeAttr(board.studentId)}"` : ""} ${enabled || teacherAction ? "" : "disabled"}><span>${escapeHtml(cell)}</span>${marked ? `<strong>✓</strong>` : ""}</button>`;
+    return `<button class="bingo-cell ${marked ? "is-marked" : ""} ${completedCells.has(index) ? "is-line" : ""}" type="button" ${enabled ? `data-bingo-cell="${index}"` : ""} ${teacherAction ? `data-bingo-teacher-unmark="${index}" data-bingo-student="${escapeAttr(board.studentId)}"` : ""} ${enabled || teacherAction ? "" : "disabled"}><span>${escapeHtml(cell)}</span>${marked ? `<strong>✓</strong>` : ""}</button>`;
   }).join("")}</div>`;
 }
 
@@ -7447,7 +7518,7 @@ function renderWordChallengeStudentGame(force = false) {
       </div>
       <section class="panel word-hero-panel">
         <p class="eyebrow">제시 초성</p>
-        <div class="word-chosung">${escapeHtml(game.settings.chosung)}</div>
+        ${renderArcadeJamo(game.settings.chosung)}
         <div class="word-clock" id="wordStudentTimer">${formatWordChallengeTime(getWordChallengeRemainingMs(game))}</div>
         <div class="timer-track"><div class="timer-fill" id="wordStudentTimerFill"></div></div>
       </section>
@@ -7690,7 +7761,7 @@ function renderWordChallengeDisplay(force = false) {
   if (status === "playing") {
     renderDisplayShell(`display-word-playing-${game.gameId}-${submissions.length}-${approvedCount}`, "초성 단어 챌린지", "", `
       <section class="panel word-hero-panel word-display-play">
-        <div><p class="eyebrow">제시 초성</p><div class="word-chosung">${escapeHtml(game.settings.chosung)}</div></div>
+        <div><p class="eyebrow">제시 초성</p>${renderArcadeJamo(game.settings.chosung)}</div>
         <div class="word-display-time"><div class="word-clock" id="wordDisplayTimer">${formatWordChallengeTime(getWordChallengeRemainingMs(game))}</div><div class="timer-track"><div class="timer-fill" id="wordDisplayTimerFill"></div></div></div>
         <p class="word-display-submit-count">${submissions.length}개 제출</p>
       </section>
@@ -7923,7 +7994,7 @@ async function enterStudent() {
   try {
     const snapshot = await get(roomRef(code));
     if (!snapshot.exists()) {
-      showToast("아직 만들어지지 않은 방입니다. 방 코드를 다시 확인해 주세요.", "error");
+      showToast("아직 만들어지지 않은 방입니다. 방 코드를 다시 확인해 주세요.", "error", "room-not-found");
       return;
     }
 
@@ -7957,7 +8028,7 @@ async function enterStudent() {
     }
   } catch (error) {
     console.error(error);
-    showToast("입장 중 오류가 발생했습니다. 인터넷 연결과 방 코드를 확인해 주세요.", "error");
+    showToast("입장 중 오류가 발생했습니다. 인터넷 연결과 방 코드를 확인해 주세요.", "error", "disconnected");
   }
 }
 
@@ -12212,7 +12283,7 @@ function renderQuestionResponseSummary(question) {
 
 function renderRanking(rows, scoreField = "score") {
   if (!rows.length) {
-    return `<div class="empty">아직 랭킹이 없습니다.</div>`;
+    return `<div class="empty arcade-empty">${renderArcadeArt("states/empty", [185, 179])}아직 랭킹이 없습니다.</div>`;
   }
 
   return `
@@ -12229,9 +12300,10 @@ function renderRanking(rows, scoreField = "score") {
 }
 
 function renderPodium(student, place, className, unit = "점") {
+  const medal = ["gold", "silver", "bronze"][place - 1];
   return `
     <div class="podium ${className}">
-      <div class="podium-place">${place}위</div>
+      <div class="podium-place">${student && medal ? renderArcadeArt(`rewards/${medal}`, [67, 96], "arcade-medal") : ""}${place}위</div>
       ${student ? renderPlaygroundAvatar(getOwnedPlaygroundAvatarId(student.id || student.studentId), "podium-avatar") : ""}
       <h2>${student ? escapeHtml(student.name) : "-"}</h2>
       <p class="score">${student ? Number(student.score || 0) : 0}${unit}</p>
@@ -12261,6 +12333,29 @@ function setPlaygroundTheme() {
   if (!appEl.dataset) return;
   appEl.dataset.playgroundRole = state.role || "home";
   appEl.dataset.playgroundMode = state.room ? getRoomMode() : "";
+  appEl.dataset.playgroundStatus = state.room?.status || "";
+}
+
+function renderArcadeArt(path, [width, height], className = "", fallback = "") {
+  const imagePath = `./assets/redesign/${path}.webp`;
+  return `<span class="arcade-art ${className}" aria-hidden="true">${escapeHtml(fallback)}<img class="arcade-image" src="${imagePath}" width="${width}" height="${height}" alt="" loading="lazy" decoding="async" /></span>`;
+}
+
+function getMafiaArcadeScene() {
+  if (getRoomMode() !== "mafia") return "";
+  if (["nightAction", "nightResult"].includes(state.room?.status)) return "night";
+  if (["discussion", "voting", "voteResult"].includes(state.room?.status)) return "day";
+  return "";
+}
+
+function renderArcadeModeArt(mode, variant, scene = "") {
+  const art = PLAYGROUND_MODE_ART[mode];
+  if (!art) return "";
+  return renderArcadeArt(`games/${mode}/${scene || variant}`, scene ? [682, 126] : art[variant], variant === "banner" ? "arcade-banner-art" : "arcade-thumbnail", art.mark);
+}
+
+function renderArcadeJamo(chosung) {
+  return `<div class="word-chosung arcade-jamo" aria-label="${escapeAttr(chosung)}">${[...chosung].map((letter) => `<span>${escapeHtml(letter)}</span>`).join("")}</div>`;
 }
 
 function normalizePlaygroundAvatarId(avatarId) {
@@ -12438,7 +12533,7 @@ function renderPlaygroundLobby() {
     <div class="playground-lobby-code"><span>방 코드</span><strong>${escapeHtml(state.roomCode)}</strong></div>
     <div class="playground-lobby-players">
       <h2>입장한 학생 <span>${students.length}명</span></h2>
-      <ul class="playground-roster">${students.map((student) => `<li>${renderPlaygroundName(student)}</li>`).join("")}</ul>
+      ${students.length ? `<ul class="playground-roster">${students.map((student) => `<li>${renderPlaygroundName(student)}</li>`).join("")}</ul>` : `<div class="arcade-lobby-empty">${renderArcadeArt("mascots/waiting", [428, 370])}<span>아직 입장한 학생이 없습니다.</span></div>`}
     </div>
   </section>`;
 }
@@ -12650,8 +12745,15 @@ function clearTimer() {
   state.timerId = null;
 }
 
-function showToast(message, type = "") {
+function showToast(message, type = "", illustration = "") {
+  const dialogStatus = document.querySelector("#teacherEntryDialog[open] #teacherEntryStatus");
+  if (dialogStatus) {
+    dialogStatus.textContent = message;
+    dialogStatus.dataset.type = type;
+    return;
+  }
   toastEl.textContent = message;
+  if (toastEl.dataset) toastEl.dataset.illustration = illustration;
   toastEl.className = `toast show ${type}`;
   window.clearTimeout(state.toastId);
   state.toastId = window.setTimeout(() => {
