@@ -48,9 +48,18 @@ const mockDatabase = `
   };
   export const remove = (key) => set(key, null);
   export const runTransaction = async (key, updater) => {
-    const next = updater(structuredClone(read(key)));
-    if (next === undefined) return { committed: false, snapshot: snapshot(read(key)) };
+    const initial = structuredClone(read(key));
+    let next = updater(structuredClone(initial));
+    if (next === undefined) return { committed: false, snapshot: snapshot(initial) };
     await new Promise((resolve) => setTimeout(resolve, 60));
+    const beforeCommit = window.__beforeTransactionCommit;
+    delete window.__beforeTransactionCommit;
+    beforeCommit?.();
+    const current = read(key);
+    if (JSON.stringify(initial) !== JSON.stringify(current)) {
+      next = updater(structuredClone(current));
+      if (next === undefined) return { committed: false, snapshot: snapshot(current) };
+    }
     write(key, next);
     publish();
     return { committed: true, snapshot: snapshot(next) };
@@ -62,7 +71,7 @@ const mockDatabase = `
 const lobby = {
   mode: "quiz", gameVariant: "word", status: "waiting",
   students: Object.fromEntries(Array.from({ length: 16 }, (_, index) => [
-    `student-${index}`, { name: `학생 ${index + 1}`, connected: true, avatarId: "03_forsythia", score: 0 }
+    `student-${index}`, { name: `학생 ${index + 1}`, connected: true, avatarId: index < 2 ? "03_forsythia" : undefined, joinedAt: index + 1, score: 0 }
   ])),
   wordChallenge: { settings: { chosung: "ㅅㄱ", duration: 120 }, gameId: "" }
 };
@@ -123,28 +132,47 @@ async function configurePage(context) {
     const picker = student.locator("#avatarPicker[open]");
     await picker.waitFor();
     assert.equal(await picker.locator("[data-avatar-choice]").count(), 20);
+    assert.equal(await picker.getByRole("button", { name: "개나리", exact: true }).isEnabled(), false);
+    assert.equal(await picker.getByRole("button", { name: "이 캐릭터 선택" }).isEnabled(), false);
     await student.waitForFunction(() => [...document.querySelectorAll(".avatar-choice img")].every((img) => img.complete && img.naturalWidth > 0));
     await capture(student, "mobile-avatars");
-    await picker.getByRole("button", { name: "책 부엉이", exact: true }).click();
+    await picker.getByRole("button", { name: "동명이", exact: true }).click();
+    await student.evaluate(() => {
+      window.__beforeTransactionCommit = () => {
+        const room = structuredClone(window.__database.rooms.ROOM42);
+        room.students["student-2"].avatarId = "01_dongmyeong";
+        window.__deliverRoom(room);
+      };
+    });
+    await picker.getByRole("button", { name: "이 캐릭터 선택" }).click();
+    await picker.getByText("다른 학생이 먼저 골랐어요. 다른 캐릭터를 선택해 주세요.").waitFor();
+    assert.equal(await picker.getByRole("button", { name: "동명이", exact: true }).isEnabled(), false);
+    assert.equal(await student.evaluate(() => Object.values(window.__database.rooms.ROOM42.students).filter((player) => player.avatarId === "01_dongmyeong").length), 1);
+    await picker.getByRole("button", { name: "책 읽는 수달", exact: true }).click();
     await picker.getByRole("button", { name: "이 캐릭터 선택" }).click();
     await picker.waitFor({ state: "hidden" });
     const currentRoom = await student.evaluate(() => window.__database.rooms.ROOM42);
     const studentId = Object.keys(currentRoom.students).find((id) => currentRoom.students[id].name === "자동 테스트");
-    assert.equal(currentRoom.students[studentId].avatarId, "20_book_owl");
+    assert.equal(currentRoom.students[studentId].avatarId, "20_book_otter");
+    assert.equal(currentRoom.students["student-0"].avatarId, "03_forsythia");
+    assert.equal(currentRoom.students["student-1"].avatarId, undefined);
     await student.getByRole("button", { name: "캐릭터 바꾸기" }).click();
-    assert.equal(await picker.getByRole("button", { name: "책 부엉이", exact: true }).getAttribute("aria-pressed"), "true");
+    assert.equal(await picker.getByRole("button", { name: "책 읽는 수달", exact: true }).getAttribute("aria-pressed"), "true");
     await picker.getByRole("button", { name: "나중에" }).click();
-    assert.match(await student.locator("#studentProfile img").getAttribute("src"), /20_book_owl/);
+    assert.match(await student.locator("#studentProfile img").getAttribute("src"), /20_book_otter/);
     await student.locator("#backHomeBtn").click();
     await student.locator("#studentEnterBtn").click();
     await student.locator("#studentProfile img").waitFor();
     assert.equal(await picker.count(), 0);
-    assert.match(await student.locator("#studentProfile img").getAttribute("src"), /20_book_owl/);
+    assert.match(await student.locator("#studentProfile img").getAttribute("src"), /20_book_otter/);
 
-    await display.evaluate((room) => window.__deliverRoom(room), currentRoom);
+    const legacyRoom = structuredClone(currentRoom);
+    legacyRoom.students[studentId].avatarId = "20_book_owl";
+    await display.evaluate((room) => window.__deliverRoom(room), legacyRoom);
     assert.equal(await display.locator(".playground-roster li").count(), 17);
     await display.waitForFunction(() => [...document.querySelectorAll(".playground-roster img")].every((img) => img.complete && img.naturalWidth > 0));
     assert.equal(await display.locator(".playground-roster li").filter({ hasText: "자동 테스트" }).locator("img").evaluate(imageIsLoaded), true);
+    assert.match(await display.locator(".playground-roster li").filter({ hasText: "자동 테스트" }).locator("img").getAttribute("src"), /20_book_otter/);
     await capture(display, "classroom-lobby");
     await display.getByRole("button", { name: "소리 켜기" }).click();
     await display.getByRole("button", { name: "소리 끄기" }).waitFor();
@@ -210,8 +238,8 @@ async function configurePage(context) {
     await display.evaluate((room) => window.__deliverRoom(room), { ...studentRoom, status: "finished" });
     const sorted = display.locator(".ranking-row").filter({ hasText: "자동 테스트" });
     await sorted.waitFor();
-    assert.match(await sorted.locator("img").getAttribute("src"), /20_book_owl/);
-    assert.match(await display.locator(".podium.first img").getAttribute("src"), /20_book_owl/);
+    assert.match(await sorted.locator("img").getAttribute("src"), /20_book_otter/);
+    assert.match(await display.locator(".podium.first img").getAttribute("src"), /20_book_otter/);
     await capture(display, "classroom-result");
     await display.getByRole("button", { name: "소리 끄기" }).click();
     await display.getByRole("button", { name: "소리 켜기" }).waitFor();

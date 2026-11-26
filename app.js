@@ -225,7 +225,7 @@ const PLAYGROUND_AVATARS = [
   ["05_sun", "햇살"], ["06_trumpet", "트럼펫"], ["07_flute", "플루트"], ["08_beat", "비트"],
   ["09_drum", "드럼"], ["10_melody", "멜로디"], ["11_camera", "카메라"], ["12_movie", "영화"],
   ["13_pixel", "픽셀"], ["14_video", "비디오"], ["15_ai", "AI"], ["16_coding", "코딩"],
-  ["17_drone", "드론"], ["18_sprout", "새싹"], ["19_blue_road", "푸른 물결"], ["20_book_owl", "책 부엉이"]
+  ["17_drone", "드론"], ["18_sprout", "새싹"], ["19_blue_road", "푸른 물결"], ["20_book_otter", "책 읽는 수달"]
 ];
 const PLAYGROUND_MODE_MARKS = [
   ["quiz", "Q"], ["compliment", "♥"], ["mafia", "◒"], ["liar", "?"],
@@ -399,7 +399,7 @@ function renderHome() {
       <header class="playground-masthead">
         <div><h1>동명중학교 PLAYGROUND</h1>
         <p class="lead">퀴즈, 칭찬, 추리, 게임이 모이는 우리 학교 플레이 공간</p></div>
-        ${renderPlaygroundAvatar(null, null, "playground-mascot")}
+        ${renderPlaygroundAvatar("01_dongmyeong", "playground-mascot")}
       </header>
 
       ${db ? "" : `
@@ -12232,7 +12232,7 @@ function renderPodium(student, place, className, unit = "점") {
   return `
     <div class="podium ${className}">
       <div class="podium-place">${place}위</div>
-      ${student ? renderPlaygroundAvatar(student.id || student.studentId, student.avatarId, "podium-avatar") : ""}
+      ${student ? renderPlaygroundAvatar(getOwnedPlaygroundAvatarId(student.id || student.studentId), "podium-avatar") : ""}
       <h2>${student ? escapeHtml(student.name) : "-"}</h2>
       <p class="score">${student ? Number(student.score || 0) : 0}${unit}</p>
     </div>
@@ -12263,18 +12263,39 @@ function setPlaygroundTheme() {
   appEl.dataset.playgroundMode = state.room ? getRoomMode() : "";
 }
 
-function getPlaygroundAvatar(avatarId) {
-  return PLAYGROUND_AVATARS.find(([id]) => id === avatarId) || PLAYGROUND_AVATARS[0];
+function normalizePlaygroundAvatarId(avatarId) {
+  if (avatarId === "20_book_owl") return "20_book_otter";
+  return PLAYGROUND_AVATARS.some(([id]) => id === avatarId) ? avatarId : "";
 }
 
-function renderPlaygroundAvatar(studentId, avatarId, className = "") {
-  const [id] = getPlaygroundAvatar(avatarId || state.room?.students?.[studentId]?.avatarId);
+function getPlaygroundAvatarOwners(students) {
+  const owners = new Map();
+  // Resolve selections saved before avatars became exclusive in a stable order.
+  const joined = (student) => Number(student?.joinedAt) || Number.MAX_SAFE_INTEGER;
+  const roster = Object.entries(students || {})
+    .sort(([idA, a], [idB, b]) => joined(a) - joined(b) || idA.localeCompare(idB));
+  for (const [studentId, student] of roster) {
+    const avatarId = normalizePlaygroundAvatarId(student?.avatarId);
+    if (avatarId && !owners.has(avatarId)) owners.set(avatarId, studentId);
+  }
+  return owners;
+}
+
+function getOwnedPlaygroundAvatarId(studentId) {
+  const students = state.room?.students;
+  const id = normalizePlaygroundAvatarId(students?.[studentId]?.avatarId);
+  return id && getPlaygroundAvatarOwners(students).get(id) === studentId ? id : "";
+}
+
+function renderPlaygroundAvatar(avatarId, className = "") {
+  const id = normalizePlaygroundAvatarId(avatarId);
+  if (!id) return `<span class="playground-avatar avatar-placeholder ${className}" aria-hidden="true"></span>`;
   return `<img class="playground-avatar ${className}" src="./assets/avatars/${id}.webp" alt="" width="40" height="40" decoding="async" />`;
 }
 
 function renderPlaygroundName(student, name = student.name || student.playerName || "이름 없음") {
   const id = student.studentId || student.playerId || student.participantId || student.id;
-  return `<span class="playground-name">${renderPlaygroundAvatar(id, student.avatarId)}<span>${escapeHtml(name)}</span></span>`;
+  return `<span class="playground-name">${renderPlaygroundAvatar(getOwnedPlaygroundAvatarId(id))}<span>${escapeHtml(name)}</span></span>`;
 }
 
 function canChoosePlaygroundAvatar(room = state.room) {
@@ -12289,9 +12310,11 @@ function bindPlaygroundAvatarPicker() {
   });
   picker?.addEventListener("click", (event) => {
     const choice = event.target.closest("[data-avatar-choice]");
-    if (choice) picker.querySelectorAll("[data-avatar-choice]").forEach((button) => {
-      button.setAttribute("aria-pressed", String(button === choice));
-    });
+    if (choice && !choice.disabled && !picker.dataset.saving) {
+      picker.dataset.avatarSelection = choice.dataset.avatarChoice;
+      picker.querySelector("#avatarPickerStatus").textContent = "";
+      syncPlaygroundAvatarChoices(picker);
+    }
     if (event.target.closest("[data-cancel-avatar]")) picker.close();
     if (event.target.closest("[data-save-avatar]")) savePlaygroundAvatar(picker);
   });
@@ -12310,18 +12333,20 @@ function syncPlaygroundStudentProfile() {
     return;
   }
   const canChoose = canChoosePlaygroundAvatar();
-  const signature = JSON.stringify([state.roomCode, student.name, student.avatarId, canChoose]);
+  const ownedAvatarId = getOwnedPlaygroundAvatarId(state.studentId);
+  const signature = JSON.stringify([state.roomCode, student.name, ownedAvatarId, canChoose]);
   profile.hidden = false;
   if (profile.dataset.signature !== signature) {
     profile.dataset.signature = signature;
     profile.innerHTML = `<div class="student-profile-inner">
       <strong>${renderPlaygroundName({ id: state.studentId, ...student })}</strong>
       <span class="student-profile-room">방 ${escapeHtml(state.roomCode)}</span>
-      ${canChoose ? '<button type="button" class="btn ghost" data-open-avatar-picker>캐릭터 바꾸기</button>' : ""}
+      ${canChoose ? `<button type="button" class="btn ghost" data-open-avatar-picker>${ownedAvatarId ? "캐릭터 바꾸기" : "캐릭터 고르기"}</button>` : ""}
     </div>`;
   }
   if (!canChoose && picker?.open) picker.close();
-  if (canChoose && !student.avatarId && state.avatarPromptedRoom !== state.roomCode && picker?.showModal) {
+  if (canChoose && picker?.open) syncPlaygroundAvatarChoices(picker);
+  if (canChoose && !ownedAvatarId && state.avatarPromptedRoom !== state.roomCode && picker?.showModal) {
     state.avatarPromptedRoom = state.roomCode;
     openPlaygroundAvatarPicker();
   }
@@ -12330,43 +12355,80 @@ function syncPlaygroundStudentProfile() {
 function openPlaygroundAvatarPicker() {
   const picker = document.querySelector("#avatarPicker");
   if (!picker?.showModal || picker.open || state.role !== "student" || !canChoosePlaygroundAvatar()) return;
-  const [selectedId] = getPlaygroundAvatar(state.room?.students?.[state.studentId]?.avatarId);
+  picker.dataset.avatarSelection = getOwnedPlaygroundAvatarId(state.studentId);
   picker.innerHTML = `
     <header><h2 id="avatarPickerTitle">내 캐릭터 고르기</h2></header>
     <div class="avatar-grid" role="group" aria-label="캐릭터 20종">
-      ${PLAYGROUND_AVATARS.map(([id, label]) => `<button type="button" class="avatar-choice" data-avatar-choice="${id}" aria-pressed="${id === selectedId}">
-        ${renderPlaygroundAvatar(null, id)}<span>${label}</span>
+      ${PLAYGROUND_AVATARS.map(([id, label]) => `<button type="button" class="avatar-choice" data-avatar-choice="${id}" aria-label="${label}" aria-pressed="false">
+        ${renderPlaygroundAvatar(id)}<span>${label}</span><small class="avatar-availability" aria-hidden="true">선택 완료</small>
       </button>`).join("")}
     </div>
+    <p id="avatarPickerStatus" class="avatar-picker-status" role="status"></p>
     <footer class="button-row"><button type="button" class="btn ghost" data-cancel-avatar>나중에</button><button type="button" class="btn primary" data-save-avatar>이 캐릭터 선택</button></footer>`;
+  syncPlaygroundAvatarChoices(picker);
   picker.showModal();
 }
 
+function syncPlaygroundAvatarChoices(picker, room = state.room) {
+  const owners = getPlaygroundAvatarOwners(room?.students);
+  const isTaken = (id) => owners.has(id) && owners.get(id) !== state.studentId;
+  if (isTaken(picker.dataset.avatarSelection)) {
+    picker.dataset.avatarSelection = "";
+    picker.querySelector("#avatarPickerStatus").textContent = "다른 학생이 먼저 골랐어요. 다른 캐릭터를 선택해 주세요.";
+  }
+  picker.querySelectorAll("[data-avatar-choice]").forEach((button) => {
+    const id = button.dataset.avatarChoice;
+    button.disabled = isTaken(id);
+    button.setAttribute("aria-pressed", String(id === picker.dataset.avatarSelection));
+  });
+  picker.querySelector("[data-save-avatar]").disabled = Boolean(picker.dataset.saving) || !picker.dataset.avatarSelection;
+}
+
+function setPlaygroundAvatarInRoom(room, studentId, selection) {
+  const avatarId = normalizePlaygroundAvatarId(selection);
+  if (!avatarId || !canChoosePlaygroundAvatar(room) || !room.students?.[studentId]) return;
+  const owners = getPlaygroundAvatarOwners(room.students);
+  const owner = owners.get(avatarId);
+  if (owner && owner !== studentId) return;
+
+  for (const [id, student] of Object.entries(room.students)) {
+    const storedId = normalizePlaygroundAvatarId(student?.avatarId);
+    if (!storedId) continue;
+    if (owners.get(storedId) === id) student.avatarId = storedId;
+    else delete student.avatarId;
+  }
+  room.students[studentId].avatarId = avatarId;
+  return room;
+}
+
 async function savePlaygroundAvatar(picker) {
-  const avatarId = picker.querySelector('[data-avatar-choice][aria-pressed="true"]')?.dataset.avatarChoice;
+  const avatarId = picker.dataset.avatarSelection;
   const save = picker.querySelector("[data-save-avatar]");
   if (save.disabled || state.role !== "student" || !canChoosePlaygroundAvatar()
     || !PLAYGROUND_AVATARS.some(([id]) => id === avatarId)) return;
   const { roomCode, studentId } = state;
+  picker.dataset.saving = "true";
   save.disabled = true;
+  let rejectedRoom;
   try {
-    const result = await runTransaction(roomRef(roomCode), (room) => {
-      if (!canChoosePlaygroundAvatar(room) || !room.students?.[studentId]) return;
-      room.students[studentId].avatarId = avatarId;
-      return room;
-    }, { applyLocally: false });
+    const result = await runTransaction(roomRef(roomCode),
+      (room) => setPlaygroundAvatarInRoom(room, studentId, avatarId), { applyLocally: false });
     if (state.roomCode !== roomCode || state.role !== "student") return;
     if (result.committed) {
       if (picker.open) picker.close();
       showToast("캐릭터를 선택했습니다.", "success");
     } else {
-      showToast("게임 진행 중에는 캐릭터를 바꿀 수 없습니다.", "error");
+      rejectedRoom = result.snapshot.val();
+      if (!canChoosePlaygroundAvatar(rejectedRoom)) {
+        showToast("게임 진행 중에는 캐릭터를 바꿀 수 없습니다.", "error");
+      }
     }
   } catch (error) {
     console.error(error);
     if (state.roomCode === roomCode) showToast("캐릭터를 저장하지 못했습니다. 다시 시도해 주세요.", "error");
   } finally {
-    save.disabled = false;
+    delete picker.dataset.saving;
+    if (picker.open) syncPlaygroundAvatarChoices(picker, rejectedRoom || state.room);
   }
 }
 

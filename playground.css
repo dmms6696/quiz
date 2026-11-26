@@ -158,6 +158,11 @@ body { background: var(--bg); }
   object-fit: contain;
 }
 
+.avatar-placeholder {
+  border: 1px dashed var(--line);
+  border-radius: 6px;
+}
+
 .playground-name,
 .student-connection,
 .playground-ranked-name {
@@ -224,7 +229,7 @@ body { background: var(--bg); }
   display: grid;
   justify-items: center;
   align-items: center;
-  grid-template-rows: 58px minmax(2.15em, auto);
+  grid-template-rows: 58px minmax(2.15em, auto) 1.2em;
   min-width: 0;
   gap: 1px;
   padding: 4px;
@@ -240,6 +245,13 @@ body { background: var(--bg); }
 
 .avatar-choice:hover { border-color: #23624d; }
 .avatar-choice span { word-break: keep-all; }
+.avatar-choice .avatar-availability { visibility: hidden; font-size: 0.72rem; }
+.avatar-choice:disabled { opacity: 1; background: #f0f2f0; color: #526159; }
+.avatar-choice:disabled img { opacity: 0.44; filter: grayscale(1); }
+.avatar-choice:disabled:hover { border-color: var(--line); }
+.avatar-choice:disabled .avatar-availability { visibility: visible; }
+.avatar-picker-status { padding: 0 18px 10px; color: var(--danger); font-size: 0.9rem; }
+.avatar-picker-status:empty { display: none; }
 .avatar-choice[aria-pressed="true"] {
   border-color: #196349;
   background: #e5f4d9;
