@@ -247,6 +247,9 @@ let firebaseApp = null;
 let db = null;
 let teacherAuth = null;
 let displayWindow = null;
+const studioSubmissions = new Set();
+let studioComposingField = null;
+let studioDeferredView = null;
 
 const state = {
   role: null,
@@ -337,6 +340,7 @@ bootApp();
 
 function bootApp() {
   bindPlaygroundAvatarPicker();
+  bindStudioComposition();
   document.addEventListener("error", (event) => {
     if (event.target?.classList?.contains("arcade-image")) event.target.hidden = true;
   }, true);
@@ -383,6 +387,7 @@ function enterDisplayMode(roomCode) {
 }
 
 function renderHome() {
+  closeTeacherQuestionDetail();
   clearRoomSubscription();
   if (state.role === "teacher") endTeacherAuthentication();
   clearTimer();
@@ -578,6 +583,7 @@ function renderStudentRoute() {
   if (status === "waiting") {
     const ownQuestions = findQuestionsByAuthor(state.studentName);
     if (state.activeView === "student-question") {
+      updateStudioQuestionQuota();
       return;
     }
     if (!ownQuestions.length) {
@@ -613,34 +619,18 @@ function renderStudentQuestionForm(existingQuestion = null) {
   const correctIndex = Number.isInteger(editingQuestion?.correctIndex) ? editingQuestion.correctIndex : -1;
 
   setView("student-question", `
-    <section class="screen">
+    <section class="screen studio-preparation studio-maker">
       <div class="status-bar">
         <button class="btn ghost" id="backHomeBtn" type="button">처음으로</button>
         <span class="pill blue">방 코드 ${escapeHtml(state.roomCode)}</span>
       </div>
-
-      <div class="question-form-layout">
-        <aside class="panel tight">
-          <h2>문제 만들기</h2>
-          <div class="notice info">
-            자기 자신에 대한 가벼운 4지선다 또는 주관식 문제를 만들어 주세요. 좋아하는 음식, 취미, 가고 싶은 나라, 좋아하는 색깔, 쉬는 시간에 자주 하는 일처럼 친구들이 즐겁게 맞힐 수 있는 주제가 좋습니다.
-          </div>
-          <div class="notice warn">
-            집주소, 전화번호, 가족 사정, 외모, 몸무게, 성적, 돈, 건강, 연애, 특정 친구를 놀리는 내용은 쓰지 않습니다.
-          </div>
-          <p class="muted small">한 학생은 최대 ${getMaxQuestionsPerStudent()}문제까지 제출할 수 있고, 대기 화면에서 제출한 문제를 각각 수정할 수 있습니다.</p>
-        </aside>
-
-        <form id="questionForm" class="panel">
+      ${renderStudioHeading("PLAY STUDIO", editingQuestion ? "퀴즈 문제 수정" : "퀴즈 문제 만들기", "creators/quiz-creator", `<div id="studioQuestionQuota"></div>`)}
+      <form id="questionForm" class="studio-composer">
+        <section class="panel studio-editor" aria-label="문제 작성">
           <input id="editingQuestionId" type="hidden" value="${escapeAttr(editingQuestion?.id || "")}" />
           <div class="field">
             <label for="authorName">이름</label>
             <input id="authorName" maxlength="20" value="${escapeAttr(state.studentName)}" required />
-          </div>
-
-          <div class="field">
-            <label for="questionText">문제</label>
-            <textarea id="questionText" maxlength="160" placeholder="예: 내가 가장 좋아하는 음식은 무엇일까요?" required>${escapeHtml(editingQuestion?.question || "")}</textarea>
           </div>
 
           <div class="field">
@@ -651,46 +641,63 @@ function renderStudentQuestionForm(existingQuestion = null) {
             </div>
           </div>
 
+          <div class="field">
+            <div class="studio-field-heading"><label for="questionText">문제</label><span class="studio-counter" data-studio-count-for="questionText"></span></div>
+            <textarea id="questionText" maxlength="160" placeholder="예: 내가 가장 좋아하는 음식은 무엇일까요?" required>${escapeHtml(editingQuestion?.question || "")}</textarea>
+          </div>
+
           <div id="choiceQuestionFields" ${questionType === "choice" ? "" : "hidden"}>
-            <div class="choice-input-grid">
+            <div class="studio-choice-inputs">
               ${[0, 1, 2, 3].map((index) => `
-                <div class="field">
-                  <label for="choice${index}">선택지 ${index + 1}</label>
+                <div class="studio-choice-row" data-choice-number="${index}">
+                  <div class="field">
+                  <div class="studio-field-heading"><label for="choice${index}">선택지 ${index + 1}</label><span class="studio-counter" data-studio-count-for="choice${index}"></span></div>
                   <input id="choice${index}" maxlength="80" value="${escapeAttr(choices[index] || "")}" />
+                  </div>
+                  <label class="studio-answer-radio"><input type="radio" name="correctIndex" value="${index}" aria-label="선택지 ${index + 1}을 정답으로 지정" ${correctIndex === index ? "checked" : ""} /> 정답</label>
                 </div>
               `).join("")}
-            </div>
-            <div class="field">
-              <span class="label">정답 번호</span>
-              <div class="answer-options">
-                ${[0, 1, 2, 3].map((index) => `
-                  <label class="radio-tile">
-                    <input type="radio" name="correctIndex" value="${index}" ${correctIndex === index ? "checked" : ""} />
-                    <span>${index + 1}</span>
-                  </label>
-                `).join("")}
-              </div>
             </div>
           </div>
 
           <div id="shortQuestionFields" class="field" ${questionType === "short" ? "" : "hidden"}>
-            <label for="correctAnswer">주관식 정답</label>
+            <div class="studio-field-heading"><label for="correctAnswer">주관식 정답</label><span class="studio-counter" data-studio-count-for="correctAnswer"></span></div>
             <input id="correctAnswer" maxlength="80" value="${escapeAttr(editingQuestion?.correctAnswer || "")}" placeholder="정답을 입력하세요" />
             <p class="muted small">띄어쓰기와 영문 대소문자는 다르게 써도 같은 정답으로 채점합니다.</p>
           </div>
-
-          <div class="button-row">
+        </section>
+        <aside class="studio-composer-aside">
+          <details class="panel studio-preview" open>
+            <summary>문제 미리보기</summary>
+            <div class="studio-preview-body">
+              <span id="studioPreviewType" class="pill blue"></span>
+              <h3 id="studioPreviewQuestion"></h3>
+              <ol id="studioPreviewChoices" class="studio-preview-choices">${[0, 1, 2, 3].map((index) => `<li data-choice-number="${index}"><b>${index + 1}</b><span data-studio-preview-choice="${index}"></span><small hidden>정답</small></li>`).join("")}</ol>
+              <p id="studioPreviewAnswer" class="notice success" hidden></p>
+            </div>
+          </details>
+          <details class="panel studio-tips">
+            <summary>문제 작성 팁</summary>
+            ${renderArcadeArt("studio/states/creator-tips", [512, 512], "studio-tip-art")}
+            <p>자기 자신에 대한 가벼운 문제를 만들어 주세요. 좋아하는 음식, 취미, 가고 싶은 나라, 좋아하는 색깔, 쉬는 시간에 자주 하는 일처럼 친구들이 즐겁게 맞힐 수 있는 주제가 좋습니다.</p>
+          </details>
+          <p class="notice warn">집주소, 전화번호, 가족 사정, 외모, 몸무게, 성적, 돈, 건강, 연애, 특정 친구를 놀리는 내용은 쓰지 않습니다.</p>
+        </aside>
+          <div class="button-row studio-composer-actions">
             <button class="btn primary" type="submit">${editingQuestion ? "문제 수정 제출" : "새 문제 제출"}</button>
-            ${editingQuestion ? `<button class="btn ghost" id="goWaitingBtn" type="button">대기 화면</button>` : ""}
+            ${editingQuestion || findQuestionsByAuthor(state.studentName).length ? `<button class="btn ghost" id="goWaitingBtn" type="button">대기 화면</button>` : ""}
           </div>
-        </form>
-      </div>
+      </form>
     </section>
   `, () => {
     document.querySelector("#backHomeBtn").addEventListener("click", renderHome);
-    document.querySelector("#questionForm").addEventListener("submit", submitQuestion);
+    const form = document.querySelector("#questionForm");
+    bindStudioSubmit(form, submitQuestion);
     document.querySelector("#goWaitingBtn")?.addEventListener("click", () => renderStudentWaiting(true));
     setupQuestionTypeFields();
+    form.addEventListener("input", updateStudioQuestionPreview);
+    form.addEventListener("change", updateStudioQuestionPreview);
+    updateStudioQuestionPreview();
   });
 }
 
@@ -703,18 +710,13 @@ function renderStudentWaiting(force = false) {
   const canAddMoreQuestions = ownQuestions.length < maxQuestions;
 
   setView("student-waiting", `
-    <section class="screen">
+    <section class="screen studio-preparation studio-waiting">
       <div class="status-bar">
         <button class="btn ghost" id="backHomeBtn" type="button">처음으로</button>
         <span class="pill blue">방 코드 ${escapeHtml(state.roomCode)}</span>
       </div>
 
-      <div class="panel">
-        <div class="arcade-feedback">
-          <div><h2>문제가 제출되었습니다.</h2>
-          <p class="lead">선생님이 게임을 시작하면 퀴즈가 시작됩니다.</p></div>
-          ${renderArcadeArt("mascots/waiting", [428, 370])}
-        </div>
+      ${renderStudioHeading("PLAY STUDIO", "문제가 제출되었습니다", "states/submission-complete", renderStudioSlots(ownQuestions.length, maxQuestions, "내 문제"))}
         <div class="stats">
           <div class="stat">
             <span class="muted">제출된 문제</span>
@@ -730,11 +732,11 @@ function renderStudentWaiting(force = false) {
           </div>
         </div>
         <div class="notice info">선생님이 게임을 시작하면 자동으로 이동합니다.</div>
-        <section class="question-card">
+        <section class="panel studio-collection">
           <div class="status-bar">
             <div>
               <h3>내가 제출한 문제</h3>
-              <p class="muted small">${ownQuestions.length} / ${maxQuestions}개 제출</p>
+              <p class="muted small">추가 가능 ${Math.max(0, maxQuestions - ownQuestions.length)}개</p>
             </div>
             <button class="btn primary" id="addQuestionBtn" type="button" ${canAddMoreQuestions ? "" : "disabled"}>문제 추가</button>
           </div>
@@ -743,7 +745,7 @@ function renderStudentWaiting(force = false) {
               ${ownQuestions.map((question, index) => `
                 <li class="list-row split">
                   <div>
-                    <p class="muted small">내 문제 ${index + 1}</p>
+                    <p class="muted small">내 문제 ${index + 1} · ${getQuestionType(question) === "short" ? "주관식" : "4지선다"}</p>
                     <strong>${escapeHtml(question.question)}</strong>
                   </div>
                   <button class="btn ghost" data-edit-own-question="${escapeAttr(question.id)}" type="button">수정</button>
@@ -752,7 +754,6 @@ function renderStudentWaiting(force = false) {
             </ul>
           ` : `<div class="empty">아직 제출한 문제가 없습니다.</div>`}
         </section>
-      </div>
     </section>
   `, () => {
     document.querySelector("#backHomeBtn").addEventListener("click", renderHome);
@@ -775,6 +776,7 @@ function renderComplimentStudentRoute() {
     const ownCompliments = findComplimentsByAuthor(state.studentId);
     if (state.activeView === "compliment-form") {
       refreshComplimentTargetSelect();
+      updateStudioComplimentQuota();
       return;
     }
     if (!ownCompliments.length) {
@@ -820,14 +822,15 @@ function renderComplimentForm(existingCompliment = null) {
   const clues = normalizeComplimentClues(editingCompliment?.clues);
 
   setView("compliment-form", `
-    <section class="screen compliment-mode">
+    <section class="screen compliment-mode studio-preparation studio-maker">
       <div class="status-bar">
         <button class="btn ghost" id="backHomeBtn" type="button">처음으로</button>
         <span class="pill gold">칭찬 스무고개</span>
         <span class="pill blue">방 코드 ${escapeHtml(state.roomCode)}</span>
       </div>
 
-      <div class="question-form-layout">
+      ${renderStudioHeading("PLAY STUDIO", editingCompliment ? "칭찬 카드 수정" : "칭찬 카드 만들기", "creators/compliment-creator", `<div id="studioComplimentQuota"></div>`)}
+      <div class="studio-composer studio-compliment-composer">
         <aside class="panel tight warm-panel">
           <h2>칭찬 카드 만들기</h2>
           <div class="notice info">
@@ -842,7 +845,7 @@ function renderComplimentForm(existingCompliment = null) {
           <p class="muted small">한 학생은 최대 ${getMaxComplimentsPerStudent()}개의 칭찬 카드를 제출할 수 있고, 같은 친구를 여러 번 선택하지 않는 것을 권장합니다.</p>
         </aside>
 
-        <form id="complimentForm" class="panel">
+        <form id="complimentForm" class="panel studio-editor">
           <input id="editingComplimentId" type="hidden" value="${escapeAttr(editingCompliment?.id || "")}" />
           <div class="field">
             <label for="complimentAuthorName">내 이름</label>
@@ -859,8 +862,8 @@ function renderComplimentForm(existingCompliment = null) {
 
           <div class="form-grid">
             ${[0, 1, 2, 3, 4].map((index) => `
-              <div class="field">
-                <label for="complimentClue${index}">칭찬 단서 ${index + 1}${index === 4 ? " 선택" : ""}</label>
+              <div class="field studio-letter">
+                <div class="studio-field-heading"><label for="complimentClue${index}">칭찬 단서 ${index + 1}${index === 4 ? " · 선택" : ""}</label><span class="studio-counter" data-studio-count-for="complimentClue${index}"></span></div>
                 <textarea id="complimentClue${index}" maxlength="120" placeholder="${index === 0 ? "예: 이 친구는 친구 말을 잘 들어준다." : ""}" ${index < 4 ? "required" : ""}>${escapeHtml(clues[index] || "")}</textarea>
               </div>
             `).join("")}
@@ -875,7 +878,11 @@ function renderComplimentForm(existingCompliment = null) {
     </section>
   `, () => {
     document.querySelector("#backHomeBtn").addEventListener("click", renderHome);
-    document.querySelector("#complimentForm").addEventListener("submit", submitCompliment);
+    const form = document.querySelector("#complimentForm");
+    bindStudioSubmit(form, submitCompliment);
+    form.addEventListener("input", () => updateStudioCounters(form));
+    updateStudioCounters(form);
+    updateStudioComplimentQuota();
     document.querySelector("#goComplimentWaitingBtn")?.addEventListener("click", () => renderComplimentWaiting(true));
   });
 }
@@ -889,16 +896,14 @@ function renderComplimentWaiting(force = false) {
   const canAddMoreCompliments = ownCompliments.length < maxCompliments && getComplimentTargetOptions().length > 0;
 
   setView("compliment-waiting", `
-    <section class="screen compliment-mode">
+    <section class="screen compliment-mode studio-preparation studio-waiting">
       <div class="status-bar">
         <button class="btn ghost" id="backHomeBtn" type="button">처음으로</button>
         <span class="pill gold">칭찬 스무고개</span>
         <span class="pill blue">방 코드 ${escapeHtml(state.roomCode)}</span>
       </div>
 
-      <div class="panel warm-panel">
-        <h2>칭찬 카드가 제출되었습니다.</h2>
-        <p class="lead">선생님이 게임을 시작하면 칭찬 스무고개가 시작됩니다.</p>
+      ${renderStudioHeading("PLAY STUDIO", "칭찬 카드가 제출되었습니다", "states/submission-complete", renderStudioSlots(ownCompliments.length, maxCompliments, "내 칭찬 카드"))}
         <div class="stats">
           <div class="stat">
             <span class="muted">제출된 칭찬 카드</span>
@@ -914,7 +919,7 @@ function renderComplimentWaiting(force = false) {
           </div>
         </div>
         <div class="notice info">선생님이 게임을 시작하면 자동으로 이동합니다.</div>
-        <section class="question-card">
+        <section class="panel studio-collection">
           <div class="status-bar">
             <div>
               <h3>내가 작성한 칭찬 카드</h3>
@@ -936,7 +941,6 @@ function renderComplimentWaiting(force = false) {
             </ul>
           ` : `<div class="empty">아직 제출한 칭찬 카드가 없습니다.</div>`}
         </section>
-      </div>
     </section>
   `, () => {
     document.querySelector("#backHomeBtn").addEventListener("click", renderHome);
@@ -2252,7 +2256,8 @@ function renderTeacherDashboard(force = true) {
   const currentQuestion = questions[currentIndex];
   const maxQuestions = getMaxQuestionsPerStudent();
 
-  setView("teacher-dashboard", `
+  const waiting = status === "waiting";
+  setView("teacher-dashboard", waiting ? renderQuizStudioPreparation(questions, students, maxQuestions) : `
     <section class="screen">
       <div class="status-bar">
         <div>
@@ -2354,12 +2359,17 @@ function renderTeacherDashboard(force = true) {
     document.querySelectorAll("[data-action]").forEach((button) => {
       button.addEventListener("click", () => handleTeacherAction(button.dataset.action));
     });
-    document.querySelectorAll("[data-delete-question]").forEach((button) => {
-      button.addEventListener("click", () => deleteQuestion(button.dataset.deleteQuestion));
+    const screen = document.querySelector("#app > .screen");
+    screen?.addEventListener("click", (event) => {
+      const detail = event.target.closest("[data-view-question]");
+      const removeQuestion = event.target.closest("[data-delete-question]");
+      if (detail) showTeacherQuestionDetail(detail.dataset.viewQuestion);
+      if (removeQuestion) deleteQuestion(removeQuestion.dataset.deleteQuestion);
     });
-    document.querySelectorAll("[data-view-question]").forEach((button) => {
-      button.addEventListener("click", () => showTeacherQuestionDetail(button.dataset.viewQuestion));
-    });
+    if (waiting) {
+      document.querySelector("#quizLibraryFilters").addEventListener("input", updateQuizStudioLibrary);
+      updateQuizStudioLibrary();
+    } else closeTeacherQuestionDetail();
     if (currentQuestion && status === "playing") {
       startTimer({
         startedAt: state.room.questionStartedAt,
@@ -2374,6 +2384,77 @@ function renderTeacherDashboard(force = true) {
       });
     }
   }, force);
+}
+
+function renderQuizStudioPreparation(questions, students, maximum) {
+  const counts = new Map();
+  for (const question of questions) {
+    const key = nameToKey(question.authorName || "");
+    counts.set(key, (counts.get(key) || 0) + 1);
+  }
+  const studentNames = new Set(students.map((student) => nameToKey(student.name)).filter(Boolean));
+  const submitted = [...studentNames].filter((key) => counts.has(key)).length;
+  const connected = students.filter((student) => student.connected).length;
+  const authors = [...new Map(questions.map((question) => [nameToKey(question.authorName || ""), question.authorName || "익명"]))]
+    .filter(([key]) => key).sort((a, b) => a[1].localeCompare(b[1], "ko"));
+  return `<section class="screen studio-preparation studio-control studio-quiz-control">
+    <div class="status-bar"><span class="pill green">${statusLabel("waiting")}</span><button class="btn ghost" id="backHomeBtn" type="button">처음으로</button></div>
+    ${renderStudioHeading("PLAY CONTROL", "퀴즈 배틀 준비", "hosts/quiz-host", `<div class="studio-room-entry"><div class="studio-room"><span>방 코드</span><strong class="room-code">${escapeHtml(state.roomCode)}</strong></div><div class="button-row studio-room-tools"><button class="btn ghost" id="copyRoomCodeBtn" type="button">방 코드 복사</button><button class="btn dark" data-action="open-display" type="button">교실 화면 팝업</button></div></div>`)}
+    <div class="stats studio-quiz-stats">
+      ${[["접속 학생", `${connected}명`], ["전체 학생", `${students.length}명`], ["제출 문제", `${questions.length}개`], ["제출 학생", `${submitted} / ${studentNames.size}명`]].map(([label, value]) => `<div class="stat"><span class="muted">${label}</span><span class="num">${value}</span></div>`).join("")}
+    </div>
+    <section class="panel studio-launch">
+      ${renderArcadeArt(`studio/states/${questions.length ? "ready-to-play" : "awaiting-submissions"}`, [512, 512], "studio-launch-art")}
+      <strong>${questions.length ? "게임을 시작할 수 있습니다" : "제출된 문제가 아직 없습니다"}</strong>
+      <button class="btn primary" data-action="start" type="button" ${questions.length ? "" : "disabled"}>게임 시작</button>
+    </section>
+    <div class="studio-control-grid">
+      <section class="panel studio-library">
+        <div class="status-bar"><h2>제출된 문제 목록</h2><span class="pill blue" id="quizLibraryCount" role="status"></span></div>
+        <div id="quizLibraryFilters" class="studio-library-filters" role="search" aria-label="제출된 문제 찾기">
+          <div class="field"><label for="quizLibrarySearch">검색</label><input id="quizLibrarySearch" type="search" placeholder="출제자 또는 문제" autocomplete="off" /></div>
+          <div class="field"><label for="quizLibraryType">문제 유형</label><select id="quizLibraryType"><option value="">모든 유형</option><option value="choice">4지선다</option><option value="short">주관식</option></select></div>
+          <div class="field"><label for="quizLibraryAuthor">출제 학생</label><select id="quizLibraryAuthor"><option value="">모든 학생</option>${authors.map(([key, label]) => `<option value="${escapeAttr(key)}">${escapeHtml(label)}</option>`).join("")}</select></div>
+        </div>
+        ${renderTeacherQuestionList(questions, "waiting")}
+        <div class="empty" id="quizLibraryNoMatches" hidden>조건에 맞는 문제가 없습니다.</div>
+      </section>
+      <aside class="studio-control-aside">
+        <section class="panel">
+          <h2>제출 설정</h2>
+          <div class="field"><label for="maxQuestionsInput">학생 1명당 최대 문제 수</label><input id="maxQuestionsInput" type="number" min="1" max="10" value="${maximum}" /></div>
+          <div class="button-row"><button class="btn ghost" data-action="save-quiz-settings" type="button">설정 저장</button></div>
+          <p class="muted small">제출 학생 수는 현재 참여 명단에서 같은 이름을 하나로 세어 집계합니다. 제출한 문제는 승인 없이 게임에 사용됩니다.</p>
+        </section>
+        <details class="panel studio-fold" id="quizStudioRoster" open>
+          <summary>참여 학생 <span>${connected}명 접속</span></summary>
+          ${students.length ? `<ul class="list studio-roster" id="quizStudioRosterList" data-studio-scroll>${students.map((student) => `<li class="list-row split"><div>${renderPlaygroundName(student)}<small class="studio-connection ${student.connected ? "is-online" : ""}">${student.connected ? "접속 중" : "연결 끊김"}</small></div><b>${counts.get(nameToKey(student.name)) || 0} / ${maximum}</b></li>`).join("")}</ul>` : renderStudioEmpty("awaiting-players", "아직 입장한 학생이 없습니다.")}
+        </details>
+        <details class="panel studio-fold" id="quizStudioModes"><summary>게임 모드</summary>${renderTeacherModeControls()}</details>
+      </aside>
+    </div>
+    <details class="panel studio-fold studio-management" id="quizStudioManagement"><summary>방 관리 및 누적 랭킹</summary>
+      <div class="button-row"><button class="btn ghost" data-action="finish" type="button" ${questions.length ? "" : "disabled"}>누적 랭킹 보기</button><button class="btn danger" data-action="reset" type="button">게임 초기화</button><button class="btn danger" data-action="clear-room" type="button">학생/자료 목록 초기화</button></div>
+      ${renderRanking(getCumulativeRanking().slice(0, 8))}
+    </details>
+  </section>`;
+}
+
+function updateQuizStudioLibrary() {
+  const filters = document.querySelector("#quizLibraryFilters");
+  if (!filters) return;
+  const query = document.querySelector("#quizLibrarySearch").value.trim().toLocaleLowerCase("ko");
+  const type = document.querySelector("#quizLibraryType").value;
+  const author = document.querySelector("#quizLibraryAuthor").value;
+  const rows = [...document.querySelectorAll(".studio-library [data-question-record]")];
+  let visible = 0;
+  for (const row of rows) {
+    row.hidden = Boolean((query && !row.dataset.searchText.toLocaleLowerCase("ko").includes(query))
+      || (type && type !== row.dataset.questionType) || (author && author !== row.dataset.questionAuthor));
+    if (!row.hidden) visible += 1;
+  }
+  setPlaygroundText("#quizLibraryCount", `${visible} / ${rows.length}개`);
+  document.querySelector("#quizLibraryNoMatches").hidden = !rows.length || visible > 0;
 }
 
 function renderComplimentTeacherDashboard(force = true) {
@@ -6901,33 +6982,39 @@ function renderBingoStudentForm(force = false) {
   const size = getBingoSize();
   const board = getMyBingoBoard();
   const values = board?.cells || Array(size * size).fill("");
-  setView(`student-bingo-form-${size}-${Boolean(board)}`, `
-    <section class="screen bingo-mode">
+  const view = `student-bingo-form-${size}-${Boolean(board)}`;
+  if (!force && state.activeView === view) {
+    setPlaygroundText("#studioBingoSubmitted", `${getBingoBoards().length}명 제출`);
+    return;
+  }
+  setView(view, `
+    <section class="screen bingo-mode studio-preparation studio-maker" data-studio-variant="bingo-${size}">
       <div class="status-bar">
         <button class="btn ghost" id="backHomeBtn" type="button">처음으로</button>
         <span class="pill blue">방 코드 ${escapeHtml(state.roomCode)}</span>
         <span class="pill ${board ? "green" : "gold"}">${board ? "빙고판 제출 완료" : `${size}×${size} 작성 중`}</span>
       </div>
-      <section class="panel bingo-intro-panel">
-        <h1>배운 개념으로 빙고판을 채워 주세요.</h1>
-        <p class="lead">각 칸에는 서로 다른 개념이나 핵심어를 하나씩 적으세요. 게임 시작 전까지 수정할 수 있습니다.</p>
-      </section>
-      <form id="bingoBoardForm" class="panel">
+      ${renderStudioHeading("PLAY STUDIO", "빙고판 만들기", "creators/bingo-creator", `<p class="muted">${size}×${size} · 각 칸에 서로 다른 개념을 적으세요.</p>`)}
+      <form id="bingoBoardForm" class="panel studio-editor">
+        <div class="status-bar"><h2>내 빙고판</h2><span class="pill gold" id="studioBingoFilled"></span></div>
         <div class="bingo-entry-grid" style="--bingo-size:${size}">
           ${values.map((value, index) => `
             <label class="bingo-entry-cell">
               <span>${index + 1}</span>
-              <input data-bingo-entry="${index}" maxlength="40" value="${escapeAttr(value)}" placeholder="개념" required />
+              <input data-bingo-entry="${index}" maxlength="40" value="${escapeAttr(value)}" aria-label="${index + 1}번 칸 개념" placeholder="개념" required />
             </label>
           `).join("")}
         </div>
         <button class="btn primary full" type="submit">${board ? "빙고판 수정 저장" : "빙고판 제출"}</button>
       </form>
-      <div class="notice info">현재 ${getBingoBoards().length}명이 빙고판을 제출했습니다. 선생님이 시작하면 자동으로 이동합니다.</div>
+      <div class="notice info"><strong id="studioBingoSubmitted">${getBingoBoards().length}명 제출</strong> · 게임 시작 전까지 수정할 수 있습니다.</div>
     </section>
   `, () => {
     document.querySelector("#backHomeBtn")?.addEventListener("click", renderHome);
-    document.querySelector("#bingoBoardForm")?.addEventListener("submit", submitBingoBoard);
+    const form = document.querySelector("#bingoBoardForm");
+    bindStudioSubmit(form, submitBingoBoard);
+    form.addEventListener("input", () => updateStudioBingoProgress(form));
+    updateStudioBingoProgress(form);
   }, force);
 }
 
@@ -7475,7 +7562,7 @@ function renderWordChallengeStudentRoute() {
 
 function renderWordChallengeStudentWaiting(force = false) {
   const game = getWordChallengeState();
-  setView(`student-word-waiting-${game.settings.chosung}-${game.settings.duration}`, `
+  setView(`student-word-waiting-${game.settings.duration}-${getStudents().length}`, `
     <section class="screen word-challenge-mode">
       <div class="status-bar">
         <button class="btn ghost" id="backHomeBtn" type="button">처음으로</button>
@@ -7487,7 +7574,6 @@ function renderWordChallengeStudentWaiting(force = false) {
         <p class="lead">${escapeHtml(state.studentName)} 학생으로 입장했습니다.</p>
       </section>
       <div class="stats">
-        <div class="stat"><span class="muted">제시 초성</span><span class="num word-stat-value">${escapeHtml(game.settings.chosung || "설정 전")}</span></div>
         <div class="stat"><span class="muted">제한 시간</span><span class="num">${game.settings.duration}초</span></div>
         <div class="stat"><span class="muted">참가 학생</span><span class="num">${getStudents().length}명</span></div>
       </div>
@@ -7773,7 +7859,7 @@ function renderWordChallengeDisplay(force = false) {
     renderDisplayShell(`display-word-reviewing-${game.gameId}-${pendingCount}-${approvedCount}`, "단어 검토 중", `제시 초성 ${game.settings.chosung}`, `<section class="panel result-panel"><h1>선생님이 제출 단어를 확인하고 있습니다.</h1><div class="stats"><div class="stat"><span class="muted">승인</span><span class="num">${approvedCount}</span></div><div class="stat"><span class="muted">검토 대기</span><span class="num">${pendingCount}</span></div><div class="stat"><span class="muted">전체 제출</span><span class="num">${submissions.length}</span></div></div></section><section class="panel"><h2>현재 순위</h2>${renderWordChallengeRanking(8)}</section>`, null, force);
     return;
   }
-  renderDisplayShell(`display-word-waiting-${game.settings.chosung}-${game.settings.duration}-${getStudents().length}`, "초성 단어 챌린지", "학생 입장을 기다리고 있습니다.", `<section class="panel result-panel"><p class="eyebrow">제시 초성</p><h1>${escapeHtml(game.settings.chosung || "설정 전")}</h1><div class="stats"><div class="stat"><span class="muted">제한 시간</span><span class="num">${game.settings.duration}초</span></div><div class="stat"><span class="muted">참가 학생</span><span class="num">${getStudents().length}명</span></div><div class="stat"><span class="muted">접속 학생</span><span class="num">${getStudents().filter((student) => student.connected).length}명</span></div></div></section>`, null, force);
+  renderDisplayShell(`display-word-waiting-${game.settings.duration}-${getStudents().length}`, "초성 단어 챌린지", "학생 입장을 기다리고 있습니다.", `<section class="panel result-panel"><h2>게임 시작 대기</h2><div class="stats"><div class="stat"><span class="muted">제한 시간</span><span class="num">${game.settings.duration}초</span></div><div class="stat"><span class="muted">참가 학생</span><span class="num">${getStudents().length}명</span></div><div class="stat"><span class="muted">접속 학생</span><span class="num">${getStudents().filter((student) => student.connected).length}명</span></div></div></section>`, null, force);
 }
 
 function renderWordChallengeFinalBody() {
@@ -10059,8 +10145,12 @@ function refreshComplimentTargetSelect() {
   const options = getComplimentTargetOptions(editingCompliment);
   const selectedId = options.some((student) => student.id === currentValue) ? currentValue : "";
 
-  targetSelect.innerHTML = renderComplimentTargetOptionHtml(options, selectedId);
-  targetSelect.value = selectedId;
+  const currentOptions = [...targetSelect.options].slice(1);
+  if (currentOptions.length !== options.length || options.some((student, index) =>
+    currentOptions[index].value !== student.id || currentOptions[index].textContent !== student.name)) {
+    targetSelect.innerHTML = renderComplimentTargetOptionHtml(options, selectedId);
+  }
+  if (targetSelect.value !== selectedId) targetSelect.value = selectedId;
   targetSelect.disabled = !options.length;
 
   const submitButton = document.querySelector("#complimentSubmitBtn");
@@ -12138,13 +12228,13 @@ function renderTeacherCurrentQuestion(question, currentIndex, total, status) {
 
 function renderTeacherQuestionList(questions, status) {
   if (!questions.length) {
-    return `<div class="empty">학생들이 문제를 제출하면 여기에 표시됩니다.</div>`;
+    return status === "waiting" ? renderStudioEmpty("awaiting-submissions", "학생들이 문제를 제출하면 여기에 표시됩니다.") : `<div class="empty">학생들이 문제를 제출하면 여기에 표시됩니다.</div>`;
   }
 
   return `
-    <ul class="list">
+    <ul class="list" ${status === "waiting" ? 'id="quizStudioQuestionList" data-studio-scroll' : ""}>
       ${questions.map((question, index) => `
-        <li class="list-row split">
+        <li class="list-row split" data-question-record data-question-type="${getQuestionType(question)}" data-question-author="${escapeAttr(nameToKey(question.authorName || ""))}" data-search-text="${escapeAttr(`${question.authorName || ""} ${question.question || ""}`)}">
           <button class="question-list-preview" data-view-question="${escapeAttr(question.id)}" type="button">
             <p class="muted small">${index + 1}. ${escapeHtml(question.authorName || "익명")} · ${getQuestionType(question) === "short" ? "주관식" : "4지선다"}</p>
             <strong>${escapeHtml(question.question)}</strong>
@@ -12159,6 +12249,7 @@ function renderTeacherQuestionList(questions, status) {
 }
 
 function showTeacherQuestionDetail(questionId) {
+  if (state.role !== "teacher") return;
   const question = getQuestions().find((item) => item.id === questionId);
   if (!question) {
     showToast("문제를 찾지 못했습니다.", "error");
@@ -12168,18 +12259,19 @@ function showTeacherQuestionDetail(questionId) {
   closeTeacherQuestionDetail();
   const choices = normalizeChoices(question.choices);
   document.body.insertAdjacentHTML("beforeend", `
-    <div class="modal-backdrop" data-question-modal>
+    <dialog class="studio-detail-dialog" data-question-modal aria-labelledby="studioDetailTitle">
       <section class="modal-panel">
         <div class="status-bar">
           <div>
             <p class="eyebrow">제출 문제 전체 보기</p>
-            <h2>${escapeHtml(question.authorName || "익명")}의 문제</h2>
+            <h2 id="studioDetailTitle">${escapeHtml(question.authorName || "익명")}의 문제</h2>
           </div>
-          <button class="btn ghost" data-close-question-modal type="button">닫기</button>
+          <button class="btn ghost" data-close-question-modal type="button" autofocus>닫기</button>
         </div>
 
         <div class="question-detail">
-          <div>
+          <div class="studio-detail-heading">
+            ${renderArcadeArt("studio/states/preview-review", [512, 512], "studio-detail-art")}
             <p class="muted small">문제</p>
             <h3>${escapeHtml(question.question)}</h3>
           </div>
@@ -12197,20 +12289,30 @@ function showTeacherQuestionDetail(questionId) {
           `}
         </div>
       </section>
-    </div>
+    </dialog>
   `);
 
   const modal = document.querySelector("[data-question-modal]");
-  modal?.addEventListener("click", (event) => {
+  modal.addEventListener("click", (event) => {
     if (event.target === modal) {
       closeTeacherQuestionDetail();
     }
   });
+  modal.addEventListener("close", () => {
+    modal.remove();
+    if (state.role === "teacher") {
+      const opener = [...document.querySelectorAll("[data-view-question]")].find((button) => button.dataset.viewQuestion === questionId);
+      (opener || document.querySelector("#quizLibrarySearch"))?.focus({ preventScroll: true });
+    }
+  }, { once: true });
   document.querySelector("[data-close-question-modal]")?.addEventListener("click", closeTeacherQuestionDetail);
+  modal.showModal();
 }
 
 function closeTeacherQuestionDetail() {
-  document.querySelector("[data-question-modal]")?.remove();
+  const modal = document.querySelector("[data-question-modal]");
+  if (modal?.open) modal.close();
+  modal?.remove();
 }
 
 function renderStudentList(students) {
@@ -12320,10 +12422,13 @@ function setView(viewName, html, afterRender = null, force = false) {
     return;
   }
 
+  if (deferStudioComposition(viewName, html, afterRender, force)) return;
+  const studioDraft = captureStudioPreparation();
   clearTimer();
   state.activeView = viewName;
   setPlaygroundTheme();
   appEl.innerHTML = html;
+  activateStudioPreparation(viewName, studioDraft);
   if (typeof afterRender === "function") {
     afterRender();
   }
@@ -12339,6 +12444,194 @@ function setPlaygroundTheme() {
 function renderArcadeArt(path, [width, height], className = "", fallback = "") {
   const imagePath = `./assets/redesign/${path}.webp`;
   return `<span class="arcade-art ${className}" aria-hidden="true">${escapeHtml(fallback)}<img class="arcade-image" src="${imagePath}" width="${width}" height="${height}" alt="" loading="lazy" decoding="async" /></span>`;
+}
+
+function renderStudioHeading(label, title, artwork, content = "") {
+  return `<header class="studio-heading"><div class="studio-heading-copy"><p class="studio-kicker">${label}</p><h1>${escapeHtml(title)}</h1>${content}</div>${renderArcadeArt(`studio/${artwork}`, [512, 512], "studio-heading-art")}</header>`;
+}
+
+function renderStudioEmpty(artwork, message) {
+  return `<div class="empty studio-empty">${renderArcadeArt(`studio/states/${artwork}`, [512, 512], "studio-empty-art")}<p>${escapeHtml(message)}</p></div>`;
+}
+
+function renderStudioSlots(used, maximum, label) {
+  return `<div class="studio-quota"><b>${label} ${used} / ${maximum}개</b><span class="studio-slots" aria-hidden="true">${Array.from({ length: maximum }, (_, i) => `<i${i < used ? ' class="is-filled"' : ""}></i>`).join("")}</span></div>`;
+}
+
+function updateStudioQuestionQuota() {
+  const slot = document.querySelector("#studioQuestionQuota");
+  const name = cleanText(document.querySelector("#authorName")?.value || state.studentName);
+  if (slot) slot.innerHTML = renderStudioSlots(findQuestionsByAuthor(name).length, getMaxQuestionsPerStudent(), "내 문제");
+}
+
+function updateStudioComplimentQuota() {
+  const slot = document.querySelector("#studioComplimentQuota");
+  if (slot) slot.innerHTML = renderStudioSlots(findComplimentsByAuthor(state.studentId).length, getMaxComplimentsPerStudent(), "내 칭찬 카드");
+}
+
+function updateStudioCounters(form) {
+  form.querySelectorAll("[data-studio-count-for]").forEach((counter) => {
+    const field = document.getElementById(counter.dataset.studioCountFor);
+    if (field) counter.textContent = `${field.value.length} / ${field.maxLength}`;
+  });
+}
+
+function updateStudioQuestionPreview() {
+  const form = document.querySelector("#questionForm");
+  if (!form) return;
+  const short = form.querySelector("[name='questionType']:checked")?.value === "short";
+  const correct = form.querySelector("[name='correctIndex']:checked")?.value;
+  setPlaygroundText("#studioPreviewType", short ? "주관식" : "4지선다");
+  setPlaygroundText("#studioPreviewQuestion", document.querySelector("#questionText").value.trim() || "문제를 입력해 주세요.");
+  const choices = form.querySelector("#studioPreviewChoices");
+  choices.hidden = short;
+  choices.querySelectorAll("li").forEach((row, i) => {
+    row.querySelector("[data-studio-preview-choice]").textContent = form.querySelector(`#choice${i}`).value.trim() || `선택지 ${i + 1}`;
+    row.querySelector("small").hidden = correct !== String(i);
+  });
+  const answer = form.querySelector("#studioPreviewAnswer");
+  answer.hidden = !short;
+  answer.textContent = `정답: ${form.querySelector("#correctAnswer").value.trim() || "아직 입력하지 않았습니다."}`;
+  updateStudioCounters(form);
+  updateStudioQuestionQuota();
+}
+
+function updateStudioBingoProgress(form) {
+  const fields = [...form.querySelectorAll("[data-bingo-entry]")];
+  let filled = 0;
+  for (const field of fields) {
+    const hasValue = Boolean(field.value.trim());
+    field.parentElement.classList.toggle("is-filled", hasValue);
+    if (hasValue) filled += 1;
+  }
+  setPlaygroundText("#studioBingoFilled", `${filled} / ${fields.length}칸`);
+}
+
+function bindStudioComposition() {
+  document.addEventListener("compositionstart", (event) => {
+    if (event.target.closest?.(".studio-preparation")) studioComposingField = event.target;
+  });
+  document.addEventListener("compositionend", (event) => {
+    if (studioComposingField !== event.target) return;
+    studioComposingField = null;
+    const next = studioDeferredView;
+    studioDeferredView = null;
+    if (next) queueMicrotask(() => {
+      if (next.scope === studioPreparationScope() && next.field.isConnected) setView(...next.args);
+    });
+  });
+}
+
+function deferStudioComposition(...args) {
+  const field = studioComposingField;
+  const scope = studioPreparationScope();
+  if (scope && field?.isConnected && document.activeElement === field
+    && field.closest(".studio-preparation")?.dataset.studioScope === scope
+    && (state.role === "teacher" || state.activeView === args[0])) {
+    studioDeferredView = { scope, field, args };
+    return true;
+  }
+  studioDeferredView = null;
+  return false;
+}
+
+function bindStudioSubmit(form, handler) {
+  form.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const key = `${state.roomCode}:${form.id}`;
+    if (studioSubmissions.has(key)) return;
+    studioSubmissions.add(key);
+    form.setAttribute("aria-busy", "true");
+    try {
+      await handler(event);
+    } finally {
+      studioSubmissions.delete(key);
+      form.removeAttribute("aria-busy");
+    }
+  });
+}
+
+function studioPreparationScope() {
+  const status = state.room?.status || "waiting";
+  if (!state.room || !["teacher", "student"].includes(state.role)
+    || !["waiting", "collecting", "memoryReady"].includes(status)
+    || (state.role === "teacher" && status === "memoryReady")) return "";
+  return `${state.roomCode}:${state.role}:${getRoomMode()}:${status}`;
+}
+
+function studioElementKey(element) {
+  if (element.id) return `id:${element.id}`;
+  for (const name of ["bingoEntry", "action", "switchMode", "viewQuestion", "deleteQuestion", "editOwnQuestion", "editOwnCompliment", "memorySize", "seatSetupNumber"]) {
+    if (element.dataset[name] !== undefined) return `${name}:${element.dataset[name]}`;
+  }
+  return element.type === "radio" && element.name ? `radio:${element.name}:${element.value}` : "";
+}
+
+function captureStudioPreparation() {
+  const root = appEl.querySelector?.(".studio-preparation[data-studio-scope]");
+  if (!root || root.dataset.studioScope !== studioPreparationScope()) return null;
+  const inputs = new Map();
+  for (const element of root.querySelectorAll("input:not([type=hidden]):not([type=file]), select, textarea")) {
+    const key = studioElementKey(element);
+    if (!key || element.disabled) continue;
+    if (["radio", "checkbox"].includes(element.type)) {
+      if (element.checked !== element.defaultChecked) inputs.set(key, { checked: element.checked });
+    } else {
+      const initial = element.tagName === "SELECT" ? [...element.options].find((option) => option.defaultSelected)?.value ?? element.options[0]?.value : element.defaultValue;
+      if (element.value !== initial) inputs.set(key, { value: element.value });
+    }
+  }
+  const folds = new Map([...root.querySelectorAll("details[id]")].map((element) => [element.id, element.open]));
+  const scrolls = new Map([...root.querySelectorAll("[data-studio-scroll][id]")].map((element) => [element.id, element.scrollTop]));
+  const active = document.activeElement;
+  return { scope: root.dataset.studioScope, variant: root.dataset.studioVariant, inputs, folds, scrolls,
+    focus: active && root.contains(active) ? studioElementKey(active) : "",
+    fieldScroll: active?.scrollTop,
+    selection: [active?.selectionStart, active?.selectionEnd, active?.selectionDirection] };
+}
+
+function activateStudioPreparation(viewName, saved) {
+  const scope = studioPreparationScope();
+  const root = scope && appEl.querySelector?.(":scope > .screen");
+  if (!root) return;
+  const mode = getRoomMode();
+  if (!root.classList.contains("studio-preparation")) {
+    if (state.role === "teacher" && viewName.startsWith("teacher-")) {
+      const titleBar = root.querySelector(":scope > .status-bar:first-child");
+      if (!titleBar || !PLAYGROUND_MODE_ART[mode]) return;
+      root.classList.add("studio-preparation", "studio-control");
+      titleBar.classList.add("studio-host-heading");
+      const title = titleBar.querySelector("h1");
+      title?.insertAdjacentHTML("beforebegin", '<p class="studio-kicker">PLAY CONTROL</p>');
+      titleBar.insertAdjacentHTML("beforeend", renderArcadeArt(`studio/hosts/${mode}-host`, [512, 512], "studio-host-art"));
+    } else if (state.role === "student" && (viewName.includes("waiting") || viewName.startsWith("student-memory-ready-"))) {
+      root.classList.add("studio-preparation", "studio-waiting");
+      const art = viewName.startsWith("student-memory-ready-") ? "ready-to-play" : "awaiting-players";
+      root.firstElementChild?.insertAdjacentHTML("afterend", renderStudioHeading("PLAY STUDIO", modeLabel(mode), `states/${art}`));
+    } else return;
+  }
+  root.dataset.studioScope = scope;
+  if (!saved || saved.scope !== scope || saved.variant !== root.dataset.studioVariant) return;
+
+  for (const element of root.querySelectorAll("input:not([type=hidden]):not([type=file]), select, textarea, button")) {
+    const key = studioElementKey(element);
+    const draft = saved.inputs.get(key);
+    if (!element.disabled && draft) {
+      if ("checked" in draft) element.checked = draft.checked;
+      else if (element.tagName !== "SELECT" || [...element.options].some((option) => option.value === draft.value)) element.value = draft.value;
+    }
+    if (key && key === saved.focus && !element.disabled) {
+      element.focus({ preventScroll: true });
+      if (typeof saved.selection[0] === "number") element.setSelectionRange?.(...saved.selection);
+      element.scrollTop = saved.fieldScroll || 0;
+    }
+  }
+  for (const details of root.querySelectorAll("details[id]")) {
+    if (saved.folds.has(details.id)) details.open = saved.folds.get(details.id);
+  }
+  for (const element of root.querySelectorAll("[data-studio-scroll][id]")) {
+    if (saved.scrolls.has(element.id)) element.scrollTop = saved.scrolls.get(element.id);
+  }
 }
 
 function getMafiaArcadeScene() {

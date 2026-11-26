@@ -132,7 +132,7 @@ async function configurePage(context) {
     assert.equal(await student.locator('[name="teacherMode"]').count(), 9);
     assert.equal(await student.locator(".arcade-game-tile").count(), 9);
     assert.equal(await student.locator("#teacherPassword").isVisible(), false);
-    for (const width of [375, 390, 430, 768, 1024]) {
+    for (const width of [360, 375, 390, 430, 768, 1024]) {
       await student.setViewportSize({ width, height: 844 });
       await assertNoHorizontalOverflow(student);
       assert.ok((await student.locator("#studentEnterBtn").boundingBox()).y < 670);
@@ -185,6 +185,7 @@ async function configurePage(context) {
     assert.equal(await picker.getByRole("button", { name: "책 읽는 수달", exact: true }).getAttribute("aria-pressed"), "true");
     await picker.getByRole("button", { name: "나중에" }).click();
     assert.match(await student.locator("#studentProfile img").getAttribute("src"), /20_book_otter/);
+    assert.equal(await student.locator(".studio-waiting").getByText("ㅅㄱ", { exact: true }).count(), 0);
     await student.locator("#backHomeBtn").click();
     await student.locator("#studentEnterBtn").click();
     await student.locator("#studentProfile img").waitFor();
@@ -195,6 +196,7 @@ async function configurePage(context) {
     legacyRoom.students[studentId].avatarId = "20_book_owl";
     await display.evaluate((room) => window.__deliverRoom(room), legacyRoom);
     assert.equal(await display.locator(".playground-roster li").count(), 17);
+    assert.equal(await display.getByText("ㅅㄱ", { exact: true }).count(), 0);
     await display.waitForFunction(() => [...document.querySelectorAll(".playground-roster img")].every((img) => img.complete && img.naturalWidth > 0));
     assert.equal(await display.locator(".playground-roster li").filter({ hasText: "자동 테스트" }).locator("img").evaluate(imageIsLoaded), true);
     assert.match(await display.locator(".playground-roster li").filter({ hasText: "자동 테스트" }).locator("img").getAttribute("src"), /20_book_otter/);
@@ -287,6 +289,7 @@ async function configurePage(context) {
       const newRoom = await teacher.evaluate((code) => window.__database.rooms[code], newCode);
       assert.ok(newRoom);
       assert.equal(newRoom.status, "waiting");
+      await teacher.locator(`.studio-control img[src$="hosts/${mode}-host.webp"]`).waitFor();
       await teacher.locator("#backHomeBtn").click();
 
       await student.evaluate((room) => window.__deliverRoom(room), { ...newRoom, students: currentRoom.students });
@@ -300,6 +303,123 @@ async function configurePage(context) {
       assert.equal(await display.locator(".arcade-role-layout, #showLiarWordBtn").count(), 0);
     }
 
+    const otherQuestion = { type: "short", authorName: "학생 1", question: "분수를 소수로 바꾸면?", correctAnswer: "다른 학생의 정답", createdAt: Date.now() - 50 };
+    const creatorRoom = { ...currentRoom, mode: "quiz", gameVariant: null, status: "waiting", maxQuestionsPerStudent: 3, questions: { otherQuestion } };
+    await student.evaluate((room) => window.__deliverRoom(room), creatorRoom);
+    const question = student.locator("#questionText");
+    await question.fill("내가 가장 좋아하는 음식은 무엇일까요?");
+    await student.locator("#choice0").fill("떡볶이");
+    await student.locator("#choice1").fill("냉면");
+    await student.locator("#choice2").fill("김치볶음밥");
+    await student.locator("#choice3").fill("샌드위치");
+    await student.locator("input[name='correctIndex'][value='0']").check();
+    assert.equal(await student.locator("#studioPreviewChoices li").first().innerText(), "1\n떡볶이\n정답");
+    await student.locator(".question-type-options").getByText("주관식", { exact: true }).click();
+    await student.locator("#correctAnswer").fill("떡볶이");
+    assert.match(await student.locator("#studioPreviewAnswer").innerText(), /떡볶이/);
+    await student.locator(".question-type-options").getByText("4지선다", { exact: true }).click();
+    assert.equal(await student.locator("#choice0").inputValue(), "떡볶이");
+    assert.equal(await student.locator("input[name='correctIndex'][value='0']").isChecked(), true);
+    await question.focus();
+    await question.evaluate((field) => field.setSelectionRange(2, 5));
+    await student.evaluate((room) => window.__deliverRoom(room), { ...creatorRoom, maxQuestionsPerStudent: 2 });
+    assert.match(await student.locator("#studioQuestionQuota").innerText(), /0 \/ 2개/);
+    assert.equal(await question.evaluate((field) => [field.selectionStart, field.selectionEnd].join(",")), "2,5");
+    for (const width of [360, 390, 768, 1024]) {
+      await student.setViewportSize({ width, height: 844 });
+      await assertNoHorizontalOverflow(student);
+      if (width === 390 || width === 768) await capture(student, `quiz-studio-${width}px`);
+    }
+    await student.setViewportSize({ width: 390, height: 844 });
+    await student.getByRole("button", { name: "새 문제 제출" }).click();
+    await student.locator("[data-edit-own-question]").waitFor();
+    assert.equal(await student.getByText(otherQuestion.question, { exact: true }).count(), 0);
+    assert.equal(await student.getByText(otherQuestion.correctAnswer, { exact: true }).count(), 0);
+    await student.locator("[data-edit-own-question]").click();
+    await student.locator(".question-type-options").getByText("주관식", { exact: true }).click();
+    await student.locator("#correctAnswer").fill("매운 떡볶이");
+    await student.getByRole("button", { name: "문제 수정 제출" }).click();
+    await student.locator("#addQuestionBtn").waitFor();
+    const authored = await student.evaluate(() => window.__database.rooms.ROOM42);
+    const questionsByStudent = Object.values(authored.questions).filter((item) => item.authorName === "자동 테스트");
+    assert.equal(questionsByStudent.length, 1);
+    assert.equal(questionsByStudent[0].correctAnswer, "매운 떡볶이");
+    await student.evaluate((room) => window.__deliverRoom(room), { ...authored, maxQuestionsPerStudent: 1 });
+    assert.equal(await student.locator("#addQuestionBtn").isEnabled(), false);
+    await capture(student, "quiz-studio-complete");
+
+    await teacher.evaluate((room) => window.__deliverRoom(room), authored);
+    await teacher.locator("#openTeacherEntryBtn").click();
+    await teacher.locator("#teacherPassword").fill(testTeacherInput);
+    await teacher.locator("#teacherRoomCode").fill("ROOM42");
+    await teacher.locator("#teacherEnterBtn").click();
+    const search = teacher.locator("#quizLibrarySearch");
+    await search.waitFor();
+    await teacher.locator("#quizLibraryAuthor").selectOption({ label: "학생 1" });
+    await teacher.locator("#quizLibraryType").selectOption("short");
+    await teacher.locator("#maxQuestionsInput").fill("5");
+    await search.fill("분수");
+    await search.focus();
+    await search.evaluate((field) => field.setSelectionRange(1, 2));
+    const rosterUpdate = structuredClone(authored);
+    rosterUpdate.students.extra = { name: "새 참가자", connected: true, score: 0 };
+    await teacher.evaluate((room) => window.__deliverRoom(room), rosterUpdate);
+    assert.equal(await teacher.locator("#maxQuestionsInput").inputValue(), "5");
+    assert.equal(await teacher.locator("#quizLibraryType").inputValue(), "short");
+    assert.equal(await teacher.locator("#quizLibraryAuthor option:checked").textContent(), "학생 1");
+    assert.equal(await search.evaluate((field) => [field === document.activeElement, field.value, field.selectionStart, field.selectionEnd].join(",")), "true,분수,1,2");
+    assert.equal(await teacher.locator("#quizLibraryCount").textContent(), "1 / 2개");
+    const searchBeforeComposition = await search.elementHandle();
+    await search.dispatchEvent("compositionstart");
+    const compositionUpdate = structuredClone(rosterUpdate);
+    compositionUpdate.students.ime = { name: "입력 중 참가자", connected: true, score: 0 };
+    await teacher.evaluate((room) => window.__deliverRoom(room), compositionUpdate);
+    assert.equal(await searchBeforeComposition.evaluate((field) => field.isConnected), true);
+    await search.dispatchEvent("compositionend");
+    await teacher.waitForFunction(() => document.querySelector(".studio-roster").textContent.includes("입력 중 참가자"));
+    assert.equal(await search.inputValue(), "분수");
+    const visibleQuestion = teacher.locator('[data-view-question="otherQuestion"]');
+    await visibleQuestion.click();
+    const detail = teacher.locator("dialog[data-question-modal][open]");
+    await detail.getByText(/다른 학생의 정답/).waitFor();
+    await teacher.evaluate((room) => window.__deliverRoom(room), rosterUpdate);
+    assert.equal(await detail.isVisible(), true);
+    await teacher.keyboard.press("Escape");
+    await detail.waitFor({ state: "hidden" });
+    await teacher.waitForFunction(() => document.activeElement?.dataset.viewQuestion === "otherQuestion");
+    for (const width of [360, 768, 1024, 1280, 1440]) {
+      await teacher.setViewportSize({ width, height: 900 });
+      await assertNoHorizontalOverflow(teacher);
+      if (width === 360 || width === 1440) await capture(teacher, `quiz-control-${width}px`);
+    }
+    teacher.on("dialog", (dialog) => dialog.accept());
+    await teacher.locator('[data-delete-question="otherQuestion"]').click();
+    await teacher.waitForFunction(() => !window.__database.rooms.ROOM42.questions.otherQuestion);
+    assert.equal(await teacher.locator('[data-action="start"]').isEnabled(), true, "filters must not change eligibility to start");
+    await teacher.locator("#backHomeBtn").click();
+
+    const complimentRoom = { ...currentRoom, mode: "compliment", gameVariant: null, status: "waiting" };
+    await student.evaluate((room) => window.__deliverRoom(room), complimentRoom);
+    const compliment = student.locator("#complimentClue0");
+    await compliment.fill("모르는 친구에게 친절하게 설명해 줍니다.");
+    await student.locator("#complimentTarget").selectOption("student-0");
+    await student.evaluate((room) => {
+      room.students.newFriend = { name: "칭찬할 새 친구", connected: true, score: 0 };
+      window.__deliverRoom(room);
+    }, complimentRoom);
+    assert.equal(await student.locator("#complimentTarget").inputValue(), "student-0");
+    assert.equal(await student.locator('#complimentTarget option[value="newFriend"]').count(), 1);
+    assert.match(await compliment.inputValue(), /친절하게/);
+    await capture(student, "mobile-compliment-studio");
+
+    const bingoRoom = { ...currentRoom, mode: "bingo", gameVariant: null, status: "waiting" };
+    await student.evaluate((room) => window.__deliverRoom(room), bingoRoom);
+    await student.locator('[data-bingo-entry="0"]').fill("은유법");
+    assert.match(await student.locator("#studioBingoFilled").textContent(), /^1 \/ \d+칸$/);
+    assert.equal(await student.locator(".bingo-entry-cell.is-filled").count(), 1);
+    await assertNoHorizontalOverflow(student);
+    await capture(student, "mobile-bingo-studio");
+
     const secretAnswer = "푸른 시간표";
     const longQuizRoom = {
       ...currentRoom, mode: "quiz", gameVariant: null, status: "playing", currentQuestionIndex: 0,
@@ -309,6 +429,7 @@ async function configurePage(context) {
     await student.evaluate((room) => window.__deliverRoom(room), longQuizRoom);
     await display.evaluate((room) => window.__deliverRoom(room), longQuizRoom);
     await student.locator("#shortAnswerInput").waitFor();
+    assert.equal(await student.locator(".studio-preparation").count(), 0);
     assert.equal(await display.getByText(secretAnswer, { exact: false }).count(), 0);
     assert.equal(await student.getByText(secretAnswer, { exact: false }).count(), 0);
     await assertNoHorizontalOverflow(student);
@@ -326,7 +447,7 @@ async function configurePage(context) {
     assert.equal(await display.getByText("당신은 의사입니다.").count(), 0);
     await capture(student, "mobile-mafia-role");
     assert.deepEqual(errors, []);
-    console.log("Playground browser tests passed (5 widths, 9 room creation/display routes, teacher authentication, avatar race, 17-person lobby, word review, sound, final results, private quiz and mafia views)");
+    console.log("Playground browser tests passed (responsive studio, 9 host screens, quiz create/edit/filter/detail/delete, live draft/caret, bingo editor, no pre-game word clue, avatar race, word review, sound, private quiz and mafia views)");
   } finally {
     await browser.close();
   }
