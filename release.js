@@ -1,6 +1,6 @@
 (() => {
   "use strict";
-  const BUILD = "1.0.0-rc.1-static";
+  const BUILD = "1.0.0-rc.2-static";
   const PROTOCOL = 1;
   const SCHEMA = 1;
   const MODES = ["quiz", "compliment", "mafia", "liar", "catchmind", "seat", "memory", "bingo", "word"];

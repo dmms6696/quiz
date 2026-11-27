@@ -1,5 +1,5 @@
 :root {
-  --pg-release-build: 1.0.0-rc.1-static;
+  --pg-release-build: 1.0.0-rc.2-static;
   --pg-wall-base: #f7f8ef;
   --pg-wall-image: url("./assets/redesign/final/backgrounds/common/home-bg.webp");
 }

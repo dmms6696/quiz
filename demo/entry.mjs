@@ -44,7 +44,7 @@ async function load(mode) {
 }
 try {
   for (const name of ["localStorage", "sessionStorage"]) Object.defineProperty(window, name, { value: memoryStorage(), configurable: false });
-  await import("../app.js?v=1.0.0-rc.1-static");
+  await import("../app.js?v=1.0.0-rc.2-static");
   if (typeof window.PlaygroundDemoMount !== "function") throw new Error("local module");
   picker.replaceChildren(...Object.entries(labels).map(([mode, label]) => new Option(label, mode)));
   picker.addEventListener("change", () => load(picker.value));

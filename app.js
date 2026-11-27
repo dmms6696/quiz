@@ -223,11 +223,9 @@ const GHOST_BINGO_CONDITIONS = [
 // =========================
 
 const PLAYGROUND_AVATARS = [
-  ["01_dongmyeong", "동명이"], ["02_pine", "솔잎"], ["03_forsythia", "개나리"], ["04_eagle", "독수리"],
-  ["05_sun", "햇살"], ["06_trumpet", "트럼펫"], ["07_flute", "플루트"], ["08_beat", "비트"],
-  ["09_drum", "드럼"], ["10_melody", "멜로디"], ["11_camera", "카메라"], ["12_movie", "영화"],
-  ["13_pixel", "픽셀"], ["14_video", "비디오"], ["15_ai", "AI"], ["16_coding", "코딩"],
-  ["17_drone", "드론"], ["18_sprout", "새싹"], ["19_blue_road", "푸른 물결"], ["20_book_otter", "책 읽는 수달"]
+  "01_dongmyeong", "02_pine", "03_forsythia", "04_eagle", "05_sun", "06_trumpet", "07_flute", "08_beat",
+  "09_drum", "10_melody", "11_camera", "12_movie", "13_pixel", "14_video", "15_ai", "16_coding",
+  "17_drone", "18_sprout", "19_blue_road", "20_book_otter"
 ];
 const PLAYGROUND_MODE_ART = {
   quiz: { mark: "Q", thumbnail: [484, 322], banner: [696, 316] },
@@ -363,7 +361,7 @@ function bootApp() {
     window.dispatchEvent(new Event("playground-demo-ready"));
     return;
   }
-  finalRelease?.setAppBuild("1.0.0-rc.1-static");
+  finalRelease?.setAppBuild("1.0.0-rc.2-static");
   finalRelease?.checkVersion();
   if (finalRelease) document.addEventListener("click", blockReadOnlyTeacherClick, true);
   document.addEventListener("error", (event) => {
@@ -387,7 +385,7 @@ async function loadFinalDemoFixture(fixture, resetTransport) {
   const { mode, settings, privateFixtureData: data, participants } = fixture;
   if (!Array.isArray(participants) || participants.length < 2 || participants.some(({ id }) => !/^demo-[1-9]\d?$/.test(id))) throw new Error("Invalid demo participants");
   const students = Object.fromEntries(participants.map(({ id, name, avatarOrdinal }, index) => [id, {
-    name, avatarId: PLAYGROUND_AVATARS[avatarOrdinal - 1]?.[0], connected: true, score: 0, joinedAt: index + 1
+    name, avatarId: PLAYGROUND_AVATARS[avatarOrdinal - 1], connected: true, score: 0, joinedAt: index + 1
   }]));
   let draftImages = [];
   if (mode === "memory") {
@@ -14104,7 +14102,7 @@ function renderArcadeJamo(chosung) {
 
 function normalizePlaygroundAvatarId(avatarId) {
   if (avatarId === "20_book_owl") return "20_book_otter";
-  return PLAYGROUND_AVATARS.some(([id]) => id === avatarId) ? avatarId : "";
+  return PLAYGROUND_AVATARS.includes(avatarId) ? avatarId : "";
 }
 
 function getPlaygroundAvatarOwners(students) {
@@ -14205,10 +14203,10 @@ function openPlaygroundAvatarPicker() {
   picker.innerHTML = `
     <header class="polish-picker-heading"><div><p class="stage-console-kicker">PLAYGROUND</p><h2 id="avatarPickerTitle">내 캐릭터 고르기</h2></div><span class="pill green" id="avatarPickerAvailable"></span></header>
     <div class="polish-picker-body">
-    <aside class="polish-picker-preview"><div id="avatarPickerPortrait"></div><strong id="avatarPickerName">선택 전</strong><span id="avatarPickerPreviewState"></span></aside>
+    <aside class="polish-picker-preview"><div id="avatarPickerPortrait"></div><span id="avatarPickerPreviewState"></span></aside>
     <div class="avatar-grid" role="group" aria-label="캐릭터 20종" tabindex="0">
-      ${PLAYGROUND_AVATARS.map(([id, label]) => `<button type="button" class="avatar-choice" data-avatar-choice="${id}" aria-label="${label}" aria-pressed="false">
-        ${renderPlaygroundAvatar(id)}<span>${label}</span><small class="avatar-availability" aria-hidden="true"></small>
+      ${PLAYGROUND_AVATARS.map((id, index) => `<button type="button" class="avatar-choice" data-avatar-choice="${id}" aria-label="캐릭터 ${index + 1}" aria-pressed="false">
+        ${renderPlaygroundAvatar(id)}<small class="avatar-availability" aria-hidden="true"></small>
       </button>`).join("")}
     </div>
     </div>
@@ -14243,9 +14241,8 @@ function syncPlaygroundAvatarChoices(picker, room = state.room) {
     portrait.dataset.selection = selectedId;
     portrait.innerHTML = renderPlaygroundAvatar(selectedId, "polish-preview-avatar");
   }
-  picker.querySelector("#avatarPickerName").textContent = PLAYGROUND_AVATARS.find(([id]) => id === selectedId)?.[1] || "선택 전";
-  picker.querySelector("#avatarPickerPreviewState").textContent = saving ? "저장 중" : selectedId ? (selectedId === savedId ? "내 캐릭터" : "선택 중") : "";
-  picker.querySelector("#avatarPickerAvailable").textContent = `${PLAYGROUND_AVATARS.filter(([id]) => !isTaken(id)).length}개 선택 가능`;
+  picker.querySelector("#avatarPickerPreviewState").textContent = saving ? "저장 중" : selectedId ? (selectedId === savedId ? "내 캐릭터" : "선택 중") : "선택 전";
+  picker.querySelector("#avatarPickerAvailable").textContent = `${PLAYGROUND_AVATARS.filter((id) => !isTaken(id)).length}개 선택 가능`;
   const save = picker.querySelector("[data-save-avatar]");
   save.disabled = saving || !selectedId;
   save.textContent = saving ? "저장 중…" : "이 캐릭터 선택";
@@ -14274,7 +14271,7 @@ async function savePlaygroundAvatar(picker) {
   const avatarId = picker.dataset.avatarSelection;
   const save = picker.querySelector("[data-save-avatar]");
   if (save.disabled || state.role !== "student" || !canChoosePlaygroundAvatar()
-    || !PLAYGROUND_AVATARS.some(([id]) => id === avatarId)) return;
+    || !PLAYGROUND_AVATARS.includes(avatarId)) return;
   const { roomCode, studentId } = state;
   picker.dataset.saving = "true";
   syncPlaygroundAvatarChoices(picker);
