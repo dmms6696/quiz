@@ -1,0 +1,126 @@
+{
+  "fixtureVersion": 1,
+  "mode": "word",
+  "title": "초성 단어 챌린지",
+  "environment": "local-demo-only",
+  "allowProductionWrites": false,
+  "recordResults": false,
+  "seed": 20261126,
+  "participants": [
+    {
+      "id": "demo-1",
+      "name": "가람",
+      "avatarOrdinal": 1
+    },
+    {
+      "id": "demo-2",
+      "name": "나래",
+      "avatarOrdinal": 2
+    },
+    {
+      "id": "demo-3",
+      "name": "다온",
+      "avatarOrdinal": 3
+    },
+    {
+      "id": "demo-4",
+      "name": "라온",
+      "avatarOrdinal": 4
+    },
+    {
+      "id": "demo-5",
+      "name": "마루",
+      "avatarOrdinal": 5
+    },
+    {
+      "id": "demo-6",
+      "name": "바다",
+      "avatarOrdinal": 6
+    }
+  ],
+  "settings": {
+    "chosung": "ㅅㄱ",
+    "durationSeconds": 60,
+    "minLength": 2
+  },
+  "privateFixtureData": {
+    "exampleWords": [
+      "사과",
+      "수건",
+      "소금",
+      "시간",
+      "생각",
+      "사기"
+    ]
+  },
+  "steps": [
+    {
+      "step": 1,
+      "action": "prepare"
+    },
+    {
+      "step": 2,
+      "action": "start"
+    },
+    {
+      "step": 3,
+      "action": "submit",
+      "actor": "demo-1",
+      "word": "사과",
+      "id": "w1"
+    },
+    {
+      "step": 4,
+      "action": "submit",
+      "actor": "demo-2",
+      "word": "수건",
+      "id": "w2"
+    },
+    {
+      "step": 5,
+      "action": "submit",
+      "actor": "demo-3",
+      "word": "사과",
+      "id": "w3",
+      "expected": "duplicate"
+    },
+    {
+      "step": 6,
+      "action": "approve",
+      "id": "w1"
+    },
+    {
+      "step": 7,
+      "action": "submit",
+      "actor": "demo-4",
+      "word": "사기",
+      "id": "w4"
+    },
+    {
+      "step": 8,
+      "action": "reject",
+      "id": "w4",
+      "reason": "체험용 반려 예시 — 교사 설정 기준"
+    },
+    {
+      "step": 9,
+      "action": "approve",
+      "id": "w2"
+    },
+    {
+      "step": 10,
+      "action": "expire"
+    },
+    {
+      "step": 11,
+      "action": "finish"
+    }
+  ],
+  "assertions": [
+    "방 전체 동일 단어 선점",
+    "반려 점수 제외 및 선점 해제",
+    "개인 결과의 승인/반려 구분",
+    "대기 자료 확인 후 종료"
+  ],
+  "adapterNotes": "Semantic actions only; map to current tested game engine. Never write fixture directly to Firebase. Keep privateFixtureData only in isolated simulation; construct role-specific projections. Generate missing boards/decks deterministically from provided concepts/images for other demo participants; do not fake completion. Check image asset paths and actual rule constraints."
+}

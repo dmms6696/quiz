@@ -1,0 +1,166 @@
+{
+  "fixtureVersion": 1,
+  "mode": "bingo",
+  "title": "개념 빙고",
+  "environment": "local-demo-only",
+  "allowProductionWrites": false,
+  "recordResults": false,
+  "seed": 20261126,
+  "participants": [
+    {
+      "id": "demo-1",
+      "name": "가람",
+      "avatarOrdinal": 1
+    },
+    {
+      "id": "demo-2",
+      "name": "나래",
+      "avatarOrdinal": 2
+    },
+    {
+      "id": "demo-3",
+      "name": "다온",
+      "avatarOrdinal": 3
+    },
+    {
+      "id": "demo-4",
+      "name": "라온",
+      "avatarOrdinal": 4
+    },
+    {
+      "id": "demo-5",
+      "name": "마루",
+      "avatarOrdinal": 5
+    },
+    {
+      "id": "demo-6",
+      "name": "바다",
+      "avatarOrdinal": 6
+    }
+  ],
+  "settings": {
+    "size": 3,
+    "targetLines": 1
+  },
+  "privateFixtureData": {
+    "concepts": [
+      "은유법",
+      "직유법",
+      "의인법",
+      "반어",
+      "역설",
+      "운율",
+      "화자",
+      "심상",
+      "상징"
+    ],
+    "boards": {
+      "demo-1": [
+        "은유법",
+        "직유법",
+        "의인법",
+        "반어",
+        "역설",
+        "운율",
+        "화자",
+        "심상",
+        "상징"
+      ],
+      "demo-2": [
+        "화자",
+        "은유법",
+        "역설",
+        "의인법",
+        "상징",
+        "직유법",
+        "운율",
+        "반어",
+        "심상"
+      ]
+    }
+  },
+  "steps": [
+    {
+      "step": 1,
+      "action": "prepare"
+    },
+    {
+      "step": 2,
+      "action": "submitBoards",
+      "actors": "all"
+    },
+    {
+      "step": 3,
+      "action": "start"
+    },
+    {
+      "step": 4,
+      "action": "call",
+      "actor": "demo-1",
+      "concept": "은유법",
+      "explanation": "다른 대상에 빗대어 직접 표현하는 방법"
+    },
+    {
+      "step": 5,
+      "action": "approveCall"
+    },
+    {
+      "step": 6,
+      "action": "markEligible"
+    },
+    {
+      "step": 7,
+      "action": "nextTurn"
+    },
+    {
+      "step": 8,
+      "action": "call",
+      "actor": "demo-2",
+      "concept": "직유법",
+      "explanation": "처럼, 같이 등을 사용해 빗대는 방법"
+    },
+    {
+      "step": 9,
+      "action": "approveCall"
+    },
+    {
+      "step": 10,
+      "action": "markEligible"
+    },
+    {
+      "step": 11,
+      "action": "nextTurn"
+    },
+    {
+      "step": 12,
+      "action": "call",
+      "actor": "demo-3",
+      "concept": "의인법",
+      "explanation": "사람이 아닌 것을 사람처럼 표현하는 방법"
+    },
+    {
+      "step": 13,
+      "action": "approveCall"
+    },
+    {
+      "step": 14,
+      "action": "markEligible"
+    },
+    {
+      "step": 15,
+      "action": "claimBingo",
+      "actor": "demo-1"
+    },
+    {
+      "step": 16,
+      "action": "finish"
+    }
+  ],
+  "assertions": [
+    "인정 후 표시",
+    "완성 줄 정확한 판정",
+    "호출 목록 중복 없음",
+    "개인 보드 공개 범위 유지"
+  ],
+  "adapterNotes": "Semantic actions only; map to current tested game engine. Never write fixture directly to Firebase. Keep privateFixtureData only in isolated simulation; construct role-specific projections. Generate missing boards/decks deterministically from provided concepts/images for other demo participants; do not fake completion. Check image asset paths and actual rule constraints."
+}

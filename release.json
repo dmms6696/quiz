@@ -1,0 +1,9 @@
+{
+  "buildId": "1.0.0-rc.1-static",
+  "protocolVersion": 1,
+  "schemaVersion": 1,
+  "compatibleProtocols": [1],
+  "compatibleSchemas": [1],
+  "minimumProtocol": 1,
+  "candidate": true
+}

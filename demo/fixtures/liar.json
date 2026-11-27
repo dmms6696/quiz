@@ -1,0 +1,134 @@
+{
+  "fixtureVersion": 1,
+  "mode": "liar",
+  "title": "라이어게임",
+  "environment": "local-demo-only",
+  "allowProductionWrites": false,
+  "recordResults": false,
+  "seed": 20261126,
+  "participants": [
+    {
+      "id": "demo-1",
+      "name": "가람",
+      "avatarOrdinal": 1
+    },
+    {
+      "id": "demo-2",
+      "name": "나래",
+      "avatarOrdinal": 2
+    },
+    {
+      "id": "demo-3",
+      "name": "다온",
+      "avatarOrdinal": 3
+    },
+    {
+      "id": "demo-4",
+      "name": "라온",
+      "avatarOrdinal": 4
+    },
+    {
+      "id": "demo-5",
+      "name": "마루",
+      "avatarOrdinal": 5
+    },
+    {
+      "id": "demo-6",
+      "name": "바다",
+      "avatarOrdinal": 6
+    }
+  ],
+  "settings": {
+    "wordA": "사과",
+    "wordB": "배",
+    "liarCount": 1
+  },
+  "privateFixtureData": {
+    "assignments": {
+      "demo-1": "사과",
+      "demo-2": "사과",
+      "demo-3": "배",
+      "demo-4": "사과",
+      "demo-5": "사과",
+      "demo-6": "사과"
+    }
+  },
+  "steps": [
+    {
+      "step": 1,
+      "action": "prepare"
+    },
+    {
+      "step": 2,
+      "action": "start"
+    },
+    {
+      "step": 3,
+      "action": "confirmWords",
+      "actors": "all"
+    },
+    {
+      "step": 4,
+      "action": "startDiscussion"
+    },
+    {
+      "step": 5,
+      "action": "startVote"
+    },
+    {
+      "step": 6,
+      "action": "vote",
+      "actor": "demo-1",
+      "target": "demo-3"
+    },
+    {
+      "step": 7,
+      "action": "vote",
+      "actor": "demo-2",
+      "target": "demo-3"
+    },
+    {
+      "step": 8,
+      "action": "vote",
+      "actor": "demo-3",
+      "target": "demo-2"
+    },
+    {
+      "step": 9,
+      "action": "vote",
+      "actor": "demo-4",
+      "target": "demo-3"
+    },
+    {
+      "step": 10,
+      "action": "vote",
+      "actor": "demo-5",
+      "target": "demo-3"
+    },
+    {
+      "step": 11,
+      "action": "vote",
+      "actor": "demo-6",
+      "target": "demo-3"
+    },
+    {
+      "step": 12,
+      "action": "revealVotes"
+    },
+    {
+      "step": 13,
+      "action": "revealLiar"
+    },
+    {
+      "step": 14,
+      "action": "finish"
+    }
+  ],
+  "assertions": [
+    "배정된 제시어만 학생에게 표시",
+    "교사 및 전광판 공개 범위 준수",
+    "본인 투표 차단",
+    "결과 공개 단계 순서"
+  ],
+  "adapterNotes": "Semantic actions only; map to current tested game engine. Never write fixture directly to Firebase. Keep privateFixtureData only in isolated simulation; construct role-specific projections. Generate missing boards/decks deterministically from provided concepts/images for other demo participants; do not fake completion. Check image asset paths and actual rule constraints."
+}

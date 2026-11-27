@@ -1,0 +1,116 @@
+{
+  "fixtureVersion": 1,
+  "mode": "compliment",
+  "title": "칭찬 스무고개",
+  "environment": "local-demo-only",
+  "allowProductionWrites": false,
+  "recordResults": false,
+  "seed": 20261126,
+  "participants": [
+    {
+      "id": "demo-1",
+      "name": "가람",
+      "avatarOrdinal": 1
+    },
+    {
+      "id": "demo-2",
+      "name": "나래",
+      "avatarOrdinal": 2
+    },
+    {
+      "id": "demo-3",
+      "name": "다온",
+      "avatarOrdinal": 3
+    },
+    {
+      "id": "demo-4",
+      "name": "라온",
+      "avatarOrdinal": 4
+    },
+    {
+      "id": "demo-5",
+      "name": "마루",
+      "avatarOrdinal": 5
+    },
+    {
+      "id": "demo-6",
+      "name": "바다",
+      "avatarOrdinal": 6
+    }
+  ],
+  "settings": {
+    "maxComplimentsPerStudent": 3
+  },
+  "privateFixtureData": {
+    "compliments": [
+      {
+        "id": "c1",
+        "authorStudentId": "demo-1",
+        "targetStudentId": "demo-2",
+        "clues": [
+          "친구의 이야기를 잘 들어 줘요.",
+          "어려운 문제를 함께 생각해 줘요.",
+          "모둠 활동에 성실하게 참여해요.",
+          "친구에게 먼저 인사해요."
+        ]
+      }
+    ]
+  },
+  "steps": [
+    {
+      "step": 1,
+      "action": "prepare"
+    },
+    {
+      "step": 2,
+      "action": "start"
+    },
+    {
+      "step": 3,
+      "action": "guessTarget",
+      "actor": "demo-3",
+      "target": "demo-4",
+      "clueIndex": 0
+    },
+    {
+      "step": 4,
+      "action": "nextClue"
+    },
+    {
+      "step": 5,
+      "action": "guessTarget",
+      "actor": "demo-3",
+      "target": "demo-2",
+      "clueIndex": 1
+    },
+    {
+      "step": 6,
+      "action": "revealTarget"
+    },
+    {
+      "step": 7,
+      "action": "startAuthorGuess"
+    },
+    {
+      "step": 8,
+      "action": "guessAuthor",
+      "actor": "demo-4",
+      "target": "demo-1"
+    },
+    {
+      "step": 9,
+      "action": "revealAuthor"
+    },
+    {
+      "step": 10,
+      "action": "finish"
+    }
+  ],
+  "assertions": [
+    "작성자는 추리 불가",
+    "단서 단계별 재추리",
+    "대상 공개 전 정보 숨김",
+    "작성자 공개 전 정보 숨김"
+  ],
+  "adapterNotes": "Semantic actions only; map to current tested game engine. Never write fixture directly to Firebase. Keep privateFixtureData only in isolated simulation; construct role-specific projections. Generate missing boards/decks deterministically from provided concepts/images for other demo participants; do not fake completion. Check image asset paths and actual rule constraints."
+}

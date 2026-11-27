@@ -1,0 +1,86 @@
+:root {
+  --pg-release-build: 1.0.0-rc.1-static;
+  --pg-wall-base: #f7f8ef;
+  --pg-wall-image: url("./assets/redesign/final/backgrounds/common/home-bg.webp");
+}
+:root[data-wallpaper="studio"] { --pg-wall-base: #f0f6ff; --pg-wall-image: url("./assets/redesign/final/backgrounds/common/studio-bg.webp"); }
+:root[data-wallpaper="lobby"] { --pg-wall-base: #f3f0fc; --pg-wall-image: url("./assets/redesign/final/backgrounds/common/lobby-bg.webp"); }
+:root[data-wallpaper="control"] { --pg-wall-base: #f3f7f2; --pg-wall-image: url("./assets/redesign/final/backgrounds/common/control-bg.webp"); }
+:root[data-wallpaper="library"] { --pg-wall-base: #fbf6eb; --pg-wall-image: url("./assets/redesign/final/backgrounds/common/library-bg.webp"); }
+:root[data-wallpaper="stage"] { --pg-wall-base: #18243b; --pg-wall-image: url("./assets/redesign/final/backgrounds/common/stage-bg.webp"); }
+:root[data-wallpaper="quiz"] { --pg-wall-base: #eff5ff; --pg-wall-image: url("./assets/redesign/final/backgrounds/games/quiz-bg.webp"); }
+:root[data-wallpaper="compliment"] { --pg-wall-base: #fff3f7; --pg-wall-image: url("./assets/redesign/final/backgrounds/games/compliment-bg.webp"); }
+:root[data-wallpaper="mafia-day"] { --pg-wall-base: #f3effb; --pg-wall-image: url("./assets/redesign/final/backgrounds/games/mafia-day-bg.webp"); }
+:root[data-wallpaper="mafia-night"] { --pg-wall-base: #211b38; --pg-wall-image: url("./assets/redesign/final/backgrounds/games/mafia-night-bg.webp"); }
+:root[data-wallpaper="mafia-ghost"] { --pg-wall-base: #302349; --pg-wall-image: url("./assets/redesign/final/backgrounds/games/mafia-ghost-bg.webp"); }
+:root[data-wallpaper="liar"] { --pg-wall-base: #fff6e8; --pg-wall-image: url("./assets/redesign/final/backgrounds/games/liar-bg.webp"); }
+:root[data-wallpaper="catchmind"] { --pg-wall-base: #f0f9ff; --pg-wall-image: url("./assets/redesign/final/backgrounds/games/catchmind-bg.webp"); }
+:root[data-wallpaper="seat"] { --pg-wall-base: #eef9f4; --pg-wall-image: url("./assets/redesign/final/backgrounds/games/seat-bg.webp"); }
+:root[data-wallpaper="memory"] { --pg-wall-base: #f1f3ff; --pg-wall-image: url("./assets/redesign/final/backgrounds/games/memory-bg.webp"); }
+:root[data-wallpaper="bingo"] { --pg-wall-base: #fff9e9; --pg-wall-image: url("./assets/redesign/final/backgrounds/games/bingo-bg.webp"); }
+:root[data-wallpaper="word"] { --pg-wall-base: #f5f1ff; --pg-wall-image: url("./assets/redesign/final/backgrounds/games/word-bg.webp"); }
+
+body { isolation: isolate; background: var(--pg-wall-base); }
+body::before, body::after {
+  content: ""; position: fixed; inset: 0; z-index: -1; pointer-events: none;
+  background: var(--pg-wall-image) center / cover no-repeat;
+}
+body::after { display: none; }
+:root[data-wallpaper="control"] body::before { opacity: 0.67; }
+:root[data-wallpaper="stage"] .classroom-sound {
+  background-color: #f7f9ff; color: #18243b; border-radius: 8px; padding-inline: 8px;
+}
+.release-controls, .release-home-tools { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; min-width: 0; }
+.release-home-tools { justify-content: flex-end; }
+.release-controls > :is(button,a), .release-home-tools > :is(button,a), .release-dialog .btn { min-height: 44px; }
+.release-guide-entry { color: #19392e; background: #edf7de; border-color: #6a8a64; }
+.release-icon { width: 20px; height: 20px; flex: none; }
+.release-dialog {
+  width: min(680px, calc(100% - 24px)); max-height: calc(100dvh - 24px);
+  padding: 0; color: #182b3a; background: #fff; border: 1px solid #9bb6ae; border-radius: 8px;
+}
+.release-dialog::backdrop { background: #162634b3; }
+.release-dialog header {
+  display: flex; justify-content: space-between; gap: 8px; align-items: center;
+  padding: 12px 16px; border-bottom: 1px solid #c3d4cc; background: #f4f8f3;
+}
+.release-dialog header h2 { font-size: 1.25rem; margin: 0; }
+.release-dialog .release-body { display: grid; gap: 12px; padding: 14px 16px; }
+.release-dialog :is(ol, ul, p) { margin-block: 0; }
+.release-steps { padding-inline-start: 1.5rem; display: grid; gap: 8px; }
+.release-data { display: grid; grid-template-columns: minmax(90px, 0.42fr) minmax(0, 1fr); gap: 6px 10px; margin: 0; }
+.release-data dd { margin: 0; overflow-wrap: anywhere; }
+.release-badge { margin: 0; padding: 5px 8px; font-weight: 750; }
+.release-preflight { margin: 4px 0; font-size: 0.88rem; }
+.studio-launch > .release-preflight { grid-column: 2 / -1; margin-block: 0; }
+.release-preflight p { overflow-wrap: anywhere; }
+.release-preflight summary { cursor: pointer; width: fit-content; max-width: 100%; padding: 6px 0; }
+.release-preflight summary img { margin-right: 5px; vertical-align: middle; }
+.release-preflight[data-level="required"] { color: #8c243b; }
+.release-preflight[data-level="warn"] { color: #765019; }
+.release-cover { display: grid; align-content: center; justify-items: center; min-height: 70dvh; color: #fff; text-align: center; padding: 20px; }
+.release-cover h1 { font-size: 3rem; margin-bottom: 0.5rem; }
+.release-cover p { font-size: 1.25rem; }
+.release-cover .release-icon { filter: invert(1); width: 36px; height: 36px; }
+.release-favorites { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.release-favorites .btn { min-height: 44px; }
+.release-wall-surface:not(:has(.panel, .display-header, .result-panel)) { color: #eef5ff; }
+[data-release-motion="reduced"] :is(.play-stage, .play-stage *, .screen, .screen *, .toast) { animation: none !important; transition: none !important; }
+.release-demo-bar {
+  position: sticky; top: 0; z-index: 12; display: flex; align-items: center; gap: 8px 12px; flex-wrap: wrap;
+  padding: 8px max(12px, env(safe-area-inset-left)); background: #f9f7e2; color: #243244; border-bottom: 1px solid #b7b087;
+}
+.release-demo-bar strong, .release-demo-bar span { display: block; }
+.release-demo-bar span { font-size: 0.82rem; }
+.release-demo-bar label { display: flex; align-items: center; gap: 5px; }
+.release-demo-bar :is(select, .btn) { width: auto; min-height: 44px; }
+.release-demo-status { margin: 14px auto; width: min(680px, calc(100% - 32px)); padding: 12px; background: #fff; }
+.release-demo-bar + .student-profile { position: static; margin-inline: auto; }
+[data-demo="true"] .ux-host-strip [data-ux-open-host], [data-demo="true"] #copyRoomCodeBtn { display: none; }
+@media (max-width: 680px) {
+  body::before { background-size: 100% auto; background-position: center top; }
+  body::after { display: block; top: auto; height: 112px; background-size: 100% auto; background-position: center bottom; }
+  .release-home-tools { justify-content: flex-start; }
+  .release-cover h1 { font-size: 2.2rem; }
+  .studio-launch > .release-preflight { grid-column: 1 / -1; }
+}

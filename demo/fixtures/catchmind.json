@@ -1,0 +1,184 @@
+{
+  "fixtureVersion": 1,
+  "mode": "catchmind",
+  "title": "캐치마인드",
+  "environment": "local-demo-only",
+  "allowProductionWrites": false,
+  "recordResults": false,
+  "seed": 20261126,
+  "participants": [
+    {
+      "id": "demo-1",
+      "name": "가람",
+      "avatarOrdinal": 1
+    },
+    {
+      "id": "demo-2",
+      "name": "나래",
+      "avatarOrdinal": 2
+    },
+    {
+      "id": "demo-3",
+      "name": "다온",
+      "avatarOrdinal": 3
+    },
+    {
+      "id": "demo-4",
+      "name": "라온",
+      "avatarOrdinal": 4
+    },
+    {
+      "id": "demo-5",
+      "name": "마루",
+      "avatarOrdinal": 5
+    },
+    {
+      "id": "demo-6",
+      "name": "바다",
+      "avatarOrdinal": 6
+    }
+  ],
+  "settings": {
+    "roundSeconds": 60,
+    "roundCount": 1
+  },
+  "privateFixtureData": {
+    "words": [
+      "우산"
+    ],
+    "drawer": "demo-1",
+    "drawing": {
+      "coordinateSpace": "normalized",
+      "strokes": [
+        {
+          "color": "#182B3A",
+          "width": 0.012,
+          "points": [
+            [
+              0.22,
+              0.48
+            ],
+            [
+              0.25,
+              0.39
+            ],
+            [
+              0.35,
+              0.27
+            ],
+            [
+              0.5,
+              0.23
+            ],
+            [
+              0.65,
+              0.27
+            ],
+            [
+              0.75,
+              0.39
+            ],
+            [
+              0.78,
+              0.48
+            ],
+            [
+              0.22,
+              0.48
+            ]
+          ]
+        },
+        {
+          "color": "#182B3A",
+          "width": 0.012,
+          "points": [
+            [
+              0.5,
+              0.48
+            ],
+            [
+              0.5,
+              0.77
+            ],
+            [
+              0.55,
+              0.81
+            ],
+            [
+              0.61,
+              0.77
+            ]
+          ]
+        }
+      ]
+    }
+  },
+  "steps": [
+    {
+      "step": 1,
+      "action": "prepare"
+    },
+    {
+      "step": 2,
+      "action": "start"
+    },
+    {
+      "step": 3,
+      "action": "drawerReady",
+      "actor": "demo-1"
+    },
+    {
+      "step": 4,
+      "action": "startRound"
+    },
+    {
+      "step": 5,
+      "action": "draw",
+      "actor": "demo-1",
+      "stroke": 0
+    },
+    {
+      "step": 6,
+      "action": "draw",
+      "actor": "demo-1",
+      "stroke": 1
+    },
+    {
+      "step": 7,
+      "action": "guess",
+      "actor": "demo-2",
+      "word": "우산"
+    },
+    {
+      "step": 8,
+      "action": "guess",
+      "actor": "demo-3",
+      "word": "모자"
+    },
+    {
+      "step": 9,
+      "action": "guess",
+      "actor": "demo-4",
+      "word": "우산"
+    },
+    {
+      "step": 10,
+      "action": "endRound"
+    },
+    {
+      "step": 11,
+      "action": "reveal"
+    },
+    {
+      "step": 12,
+      "action": "finish"
+    }
+  ],
+  "assertions": [
+    "그림 표시와 정답 입력 동시 동작",
+    "출제자 제시어 비밀",
+    "정답자 중복 채점 차단",
+    "결과 그림/정답 일치"
+  ],
+  "adapterNotes": "Semantic actions only; map to current tested game engine. Never write fixture directly to Firebase. Keep privateFixtureData only in isolated simulation; construct role-specific projections. Generate missing boards/decks deterministically from provided concepts/images for other demo participants; do not fake completion. Check image asset paths and actual rule constraints."
+}

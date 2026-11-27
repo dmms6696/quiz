@@ -1,0 +1,56 @@
+.ux-entry-art { width: 48px; height: 42px; }
+.ux-inline-status:empty { display: none; }
+.ux-inline-status { display: flex; align-items: center; gap: 6px; margin: 0; color: var(--muted); font-size: 0.88rem; line-height: 1.4; }
+.ux-inline-status[data-type="error"] { padding: 7px 8px; border: 1px solid #dfb1bd; border-radius: 8px; color: #842941; background: #fff0f4; }
+.ux-inline-art { height: 38px; width: 38px; flex: 0 0 auto; }
+.ux-resume { display: grid; grid-template-columns: 44px minmax(0, 1fr); align-items: center; gap: 6px; padding: 7px; border: 1px solid #b3cdb6; border-radius: 8px; background: #f1f8e7; }
+.ux-resume-art { width: 44px; height: 44px; }
+.ux-resume .button-row { gap: 4px; }
+.ux-resume .button-row > .btn { min-height: 44px; width: auto; padding: 5px 8px; font-size: 0.82rem; }
+.studio-editor input[readonly] { color: #465966; background: #f4f6f4; }
+.ux-icon { width: 20px; height: 20px; flex: 0 0 auto; }
+.ux-teacher-intents.segmented, .ux-host-tabs.segmented { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.ux-host-strip { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; gap: 7px 12px; align-items: center; padding: 5px 10px; border: 1px solid var(--line); border-radius: 8px; background: #f4f9f0; }
+.ux-host-strip > strong { overflow-wrap: anywhere; }
+.ux-host-strip > span { color: var(--muted); font-size: 0.88rem; }
+.ux-host-dialog { width: min(750px, calc(100% - 20px)); max-height: calc(100dvh - 20px); padding: 0; border: 1px solid #a4b9af; border-radius: 16px; background: #fff; color: var(--ink); }
+.ux-host-dialog::backdrop { background: #182b3aaa; }
+.ux-dialog-heading { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 11px 14px; border-bottom: 1px solid var(--line); background: #f7f9f3; }
+.ux-dialog-heading h2 { font-size: 1.46rem; }
+.ux-dialog-body, .ux-host-pane { display: grid; gap: 11px; min-width: 0; }
+.ux-dialog-body { padding: 12px; }
+.ux-host-tabs.segmented { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+.ux-host-tabs .btn { padding: 5px; font-size: 0.87rem; }
+.ux-host-tabs .btn[aria-pressed="true"] { border-color: #215746; background: #ecf5df; }
+.ux-qr-row { display: grid; grid-template-columns: 192px minmax(0, 1fr); align-items: center; gap: 10px; min-width: 0; }
+.ux-qr-row canvas { width: 192px; height: 192px; border: 1px solid var(--line); border-radius: 8px; }
+.ux-qr-row .room-code { display: block; margin-block: 4px; }
+.ux-link { display: block; overflow-wrap: anywhere; color: #164e86; }
+.ux-roster-filters { display: grid; grid-template-columns: 1fr minmax(118px, 0.45fr); gap: 7px; }
+.ux-roster-list { max-height: 42dvh; overflow: auto; padding: 3px; }
+.ux-roster-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 7px; }
+.ux-roster-row small { display: block; color: var(--muted); }
+.ux-roster-row .btn { padding: 5px 8px; white-space: nowrap; }
+.ux-rename-panel { display: grid; gap: 6px; padding: 8px; border: 1px solid var(--line); border-radius: 8px; }
+.ux-quiz-options, .ux-library-layout { display: grid; gap: 10px; min-width: 0; }
+.ux-quiz-options { margin: 10px 0; }
+.ux-draft-tool { grid-column: 1 / -1; display: grid; gap: 4px; min-width: 0; padding: 8px 0; border-top: 1px solid var(--line); }
+.ux-draft-tool .ux-inline-status { min-height: 0; }
+.ux-library-summary { display: grid; grid-template-columns: 80px minmax(0, 1fr); gap: 10px; align-items: center; }
+.ux-library-summary h3, .ux-library-summary p { margin: 0; }
+.ux-library-art { width: 80px; height: 64px; object-fit: contain; }
+.ux-library-analysis { min-width: 0; border-top: 1px solid var(--line); border-bottom: 1px solid var(--line); }
+.ux-library-analysis summary { padding: 10px 0; cursor: pointer; }
+.ux-library-analysis summary img { margin-right: 6px; vertical-align: middle; }
+.ux-library-analysis dl { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 4px 12px; margin: 0 0 12px; }
+.ux-library-analysis dd { margin: 0; overflow-wrap: anywhere; }
+.ux-library-layout .ux-roster-row { overflow-wrap: anywhere; }
+@media (max-width: 540px) {
+  .ux-host-strip { grid-template-columns: minmax(0, 1fr) auto; }
+  .ux-host-strip > span { grid-row: 2; }
+  .ux-host-strip > .btn { grid-row: 1 / span 2; grid-column: 2; }
+  .ux-qr-row { grid-template-columns: 124px minmax(0, 1fr); }
+  .ux-qr-row canvas { width: 124px; height: 124px; }
+  .ux-roster-row { grid-template-columns: minmax(0, 1fr); }
+  .ux-roster-row .btn { width: auto; }
+}

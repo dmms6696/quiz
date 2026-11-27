@@ -1,0 +1,168 @@
+{
+  "fixtureVersion": 1,
+  "mode": "seat",
+  "title": "자리바꾸기",
+  "environment": "local-demo-only",
+  "allowProductionWrites": false,
+  "recordResults": false,
+  "seed": 20261126,
+  "participants": [
+    {
+      "id": "demo-1",
+      "name": "가람",
+      "avatarOrdinal": 1
+    },
+    {
+      "id": "demo-2",
+      "name": "나래",
+      "avatarOrdinal": 2
+    },
+    {
+      "id": "demo-3",
+      "name": "다온",
+      "avatarOrdinal": 3
+    },
+    {
+      "id": "demo-4",
+      "name": "라온",
+      "avatarOrdinal": 4
+    },
+    {
+      "id": "demo-5",
+      "name": "마루",
+      "avatarOrdinal": 5
+    },
+    {
+      "id": "demo-6",
+      "name": "바다",
+      "avatarOrdinal": 6
+    }
+  ],
+  "settings": {
+    "rows": 2,
+    "columns": 3,
+    "disabledSeats": [],
+    "cardPhaseSeconds": 12
+  },
+  "privateFixtureData": {
+    "seatIds": [
+      "seat_1",
+      "seat_2",
+      "seat_3",
+      "seat_4",
+      "seat_5",
+      "seat_6"
+    ],
+    "cards": [
+      {
+        "owner": "demo-1",
+        "kind": "자리 보호"
+      },
+      {
+        "owner": "demo-2",
+        "kind": "자리 교환"
+      },
+      {
+        "owner": "demo-3",
+        "kind": "다시 선택"
+      },
+      {
+        "owner": "demo-4",
+        "kind": "운명의 교환"
+      }
+    ],
+    "previousAssignments": {
+      "seat_1": "demo-2",
+      "seat_2": "demo-1",
+      "seat_3": "demo-3",
+      "seat_4": "demo-4",
+      "seat_5": "demo-5",
+      "seat_6": "demo-6"
+    }
+  },
+  "steps": [
+    {
+      "step": 1,
+      "action": "prepare"
+    },
+    {
+      "step": 2,
+      "action": "start"
+    },
+    {
+      "step": 3,
+      "action": "selectSeat",
+      "actor": "demo-1",
+      "seat": "seat_1"
+    },
+    {
+      "step": 4,
+      "action": "endCardPhase"
+    },
+    {
+      "step": 5,
+      "action": "selectSeat",
+      "actor": "demo-2",
+      "seat": "seat_2"
+    },
+    {
+      "step": 6,
+      "action": "endCardPhase"
+    },
+    {
+      "step": 7,
+      "action": "selectSeat",
+      "actor": "demo-3",
+      "seat": "seat_3"
+    },
+    {
+      "step": 8,
+      "action": "endCardPhase"
+    },
+    {
+      "step": 9,
+      "action": "selectSeat",
+      "actor": "demo-4",
+      "seat": "seat_4"
+    },
+    {
+      "step": 10,
+      "action": "endCardPhase"
+    },
+    {
+      "step": 11,
+      "action": "selectSeat",
+      "actor": "demo-5",
+      "seat": "seat_5"
+    },
+    {
+      "step": 12,
+      "action": "endCardPhase"
+    },
+    {
+      "step": 13,
+      "action": "selectSeat",
+      "actor": "demo-6",
+      "seat": "seat_6"
+    },
+    {
+      "step": 14,
+      "action": "endCardPhase"
+    },
+    {
+      "step": 15,
+      "action": "revealFinal"
+    },
+    {
+      "step": 16,
+      "action": "finish"
+    }
+  ],
+  "assertions": [
+    "정확히 학생당 1좌석",
+    "최종 공개 전 타인의 배정 숨김",
+    "카드 보호/교환 테스트는 별도 변형에서 검증",
+    "이전 배치 비교는 최종 공개 후"
+  ],
+  "adapterNotes": "Semantic actions only; map to current tested game engine. Never write fixture directly to Firebase. Keep privateFixtureData only in isolated simulation; construct role-specific projections. Generate missing boards/decks deterministically from provided concepts/images for other demo participants; do not fake completion. Check image asset paths and actual rule constraints."
+}

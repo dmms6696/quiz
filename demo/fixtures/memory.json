@@ -1,0 +1,151 @@
+{
+  "fixtureVersion": 1,
+  "mode": "memory",
+  "title": "메모리 배틀",
+  "environment": "local-demo-only",
+  "allowProductionWrites": false,
+  "recordResults": false,
+  "seed": 20261126,
+  "participants": [
+    {
+      "id": "demo-1",
+      "name": "가람",
+      "avatarOrdinal": 1
+    },
+    {
+      "id": "demo-2",
+      "name": "나래",
+      "avatarOrdinal": 2
+    },
+    {
+      "id": "demo-3",
+      "name": "다온",
+      "avatarOrdinal": 3
+    },
+    {
+      "id": "demo-4",
+      "name": "라온",
+      "avatarOrdinal": 4
+    },
+    {
+      "id": "demo-5",
+      "name": "마루",
+      "avatarOrdinal": 5
+    },
+    {
+      "id": "demo-6",
+      "name": "바다",
+      "avatarOrdinal": 6
+    }
+  ],
+  "settings": {
+    "boardSize": 2,
+    "practice": true
+  },
+  "privateFixtureData": {
+    "imageReferences": [
+      {
+        "id": "img1",
+        "asset": "assets/avatars/01_dongmyeong.webp"
+      },
+      {
+        "id": "img2",
+        "asset": "assets/avatars/20_book_otter.webp"
+      }
+    ],
+    "decks": {
+      "demo-1": [
+        "img1",
+        "img2",
+        "img1",
+        "img2"
+      ],
+      "demo-2": [
+        "img2",
+        "img1",
+        "img1",
+        "img2"
+      ]
+    }
+  },
+  "steps": [
+    {
+      "step": 1,
+      "action": "prepare"
+    },
+    {
+      "step": 2,
+      "action": "imagesReady",
+      "actors": "all"
+    },
+    {
+      "step": 3,
+      "action": "startCountdown"
+    },
+    {
+      "step": 4,
+      "action": "startPlay"
+    },
+    {
+      "step": 5,
+      "action": "flip",
+      "actor": "demo-1",
+      "index": 0
+    },
+    {
+      "step": 6,
+      "action": "flip",
+      "actor": "demo-1",
+      "index": 1
+    },
+    {
+      "step": 7,
+      "action": "settleMismatch",
+      "actor": "demo-1"
+    },
+    {
+      "step": 8,
+      "action": "flip",
+      "actor": "demo-1",
+      "index": 0
+    },
+    {
+      "step": 9,
+      "action": "flip",
+      "actor": "demo-1",
+      "index": 2
+    },
+    {
+      "step": 10,
+      "action": "flip",
+      "actor": "demo-1",
+      "index": 1
+    },
+    {
+      "step": 11,
+      "action": "flip",
+      "actor": "demo-1",
+      "index": 3
+    },
+    {
+      "step": 12,
+      "action": "finishPlayer",
+      "actor": "demo-1"
+    },
+    {
+      "step": 13,
+      "action": "endGame"
+    },
+    {
+      "step": 14,
+      "action": "revealResults"
+    }
+  ],
+  "assertions": [
+    "불일치 뒤집기 및 짝 맞추기",
+    "학생별 카드판 보호",
+    "연습 기록 운영 랭킹 반영 0",
+    "미완료 학생 결과 구분"
+  ],
+  "adapterNotes": "Semantic actions only; map to current tested game engine. Never write fixture directly to Firebase. Keep privateFixtureData only in isolated simulation; construct role-specific projections. Generate missing boards/decks deterministically from provided concepts/images for other demo participants; do not fake completion. Check image asset paths and actual rule constraints."
+}

@@ -1,0 +1,140 @@
+{
+  "fixtureVersion": 1,
+  "mode": "quiz",
+  "title": "퀴즈 배틀",
+  "environment": "local-demo-only",
+  "allowProductionWrites": false,
+  "recordResults": false,
+  "seed": 20261126,
+  "participants": [
+    {
+      "id": "demo-1",
+      "name": "가람",
+      "avatarOrdinal": 1
+    },
+    {
+      "id": "demo-2",
+      "name": "나래",
+      "avatarOrdinal": 2
+    },
+    {
+      "id": "demo-3",
+      "name": "다온",
+      "avatarOrdinal": 3
+    },
+    {
+      "id": "demo-4",
+      "name": "라온",
+      "avatarOrdinal": 4
+    },
+    {
+      "id": "demo-5",
+      "name": "마루",
+      "avatarOrdinal": 5
+    },
+    {
+      "id": "demo-6",
+      "name": "바다",
+      "avatarOrdinal": 6
+    }
+  ],
+  "settings": {
+    "timeLimitSeconds": 20,
+    "shuffleQuestions": false,
+    "allowSolveOwnQuestion": true
+  },
+  "privateFixtureData": {
+    "questions": [
+      {
+        "id": "q1",
+        "authorStudentId": "demo-1",
+        "type": "choice",
+        "question": "다음 중 합성어는 무엇일까요?",
+        "choices": [
+          "풋사과",
+          "손목",
+          "하늘",
+          "덧신"
+        ],
+        "correctIndex": 1,
+        "explanation": "손과 목이 결합한 합성어입니다."
+      },
+      {
+        "id": "q2",
+        "authorStudentId": "demo-2",
+        "type": "short",
+        "question": "다른 대상에 빗대어 직접 표현하는 비유법 중 ‘~처럼’을 사용하는 방법은?",
+        "acceptedAnswers": [
+          "직유법",
+          "직유"
+        ],
+        "explanation": "비교 표현을 사용하여 빗대는 직유법입니다."
+      }
+    ]
+  },
+  "steps": [
+    {
+      "step": 1,
+      "action": "prepare"
+    },
+    {
+      "step": 2,
+      "action": "start"
+    },
+    {
+      "step": 3,
+      "action": "answer",
+      "actor": "demo-2",
+      "question": "q1",
+      "selectedIndex": 1,
+      "elapsedMs": 4000
+    },
+    {
+      "step": 4,
+      "action": "answer",
+      "actor": "demo-3",
+      "question": "q1",
+      "selectedIndex": 0,
+      "elapsedMs": 7000
+    },
+    {
+      "step": 5,
+      "action": "reveal"
+    },
+    {
+      "step": 6,
+      "action": "next"
+    },
+    {
+      "step": 7,
+      "action": "answer",
+      "actor": "demo-1",
+      "question": "q2",
+      "text": "직유법",
+      "elapsedMs": 5000
+    },
+    {
+      "step": 8,
+      "action": "answer",
+      "actor": "demo-4",
+      "question": "q2",
+      "text": "은유법",
+      "elapsedMs": 9000
+    },
+    {
+      "step": 9,
+      "action": "reveal"
+    },
+    {
+      "step": 10,
+      "action": "finish"
+    }
+  ],
+  "assertions": [
+    "정답 공개 전 answer key를 학생 projection에서 제외",
+    "정오답·미응답이 구분됨",
+    "개인 오답 복습에는 본인 응답만 표시",
+    "동일 requestId 재전송 점수 불변"
+  ],
+  "adapterNotes": "Semantic actions only; map to current tested game engine. Never write fixture directly to Firebase. Keep privateFixtureData only in isolated simulation; construct role-specific projections. Generate missing boards/decks deterministically from provided concepts/images for other demo participants; do not fake completion. Check image asset paths and actual rule constraints."
+}

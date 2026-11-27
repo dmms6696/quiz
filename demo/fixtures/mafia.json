@@ -1,0 +1,205 @@
+{
+  "fixtureVersion": 1,
+  "mode": "mafia",
+  "title": "교실 마피아",
+  "environment": "local-demo-only",
+  "allowProductionWrites": false,
+  "recordResults": false,
+  "seed": 20261126,
+  "participants": [
+    {
+      "id": "demo-1",
+      "name": "가람",
+      "avatarOrdinal": 1
+    },
+    {
+      "id": "demo-2",
+      "name": "나래",
+      "avatarOrdinal": 2
+    },
+    {
+      "id": "demo-3",
+      "name": "다온",
+      "avatarOrdinal": 3
+    },
+    {
+      "id": "demo-4",
+      "name": "라온",
+      "avatarOrdinal": 4
+    },
+    {
+      "id": "demo-5",
+      "name": "마루",
+      "avatarOrdinal": 5
+    },
+    {
+      "id": "demo-6",
+      "name": "바다",
+      "avatarOrdinal": 6
+    }
+  ],
+  "settings": {
+    "mafiaCount": 1,
+    "policeCount": 1,
+    "doctorCount": 1,
+    "discussionSeconds": 180
+  },
+  "privateFixtureData": {
+    "roles": {
+      "demo-1": "mafia",
+      "demo-2": "police",
+      "demo-3": "doctor",
+      "demo-4": "citizen",
+      "demo-5": "citizen",
+      "demo-6": "citizen"
+    },
+    "ghostBingoConditionLabels": [
+      "투표 동점",
+      "과반 득표",
+      "1표 차 승부",
+      "처형 없음",
+      "새 유령 등장",
+      "마피아 사망",
+      "밤의 희생자",
+      "밤의 평화"
+    ]
+  },
+  "steps": [
+    {
+      "step": 1,
+      "action": "prepare"
+    },
+    {
+      "step": 2,
+      "action": "assignRoles"
+    },
+    {
+      "step": 3,
+      "action": "confirmRoles",
+      "actors": "all"
+    },
+    {
+      "step": 4,
+      "action": "startNight"
+    },
+    {
+      "step": 5,
+      "action": "nightAction",
+      "actor": "demo-1",
+      "target": "demo-6"
+    },
+    {
+      "step": 6,
+      "action": "nightAction",
+      "actor": "demo-2",
+      "target": "demo-1"
+    },
+    {
+      "step": 7,
+      "action": "nightAction",
+      "actor": "demo-3",
+      "target": "demo-3"
+    },
+    {
+      "step": 8,
+      "action": "nightAction",
+      "actor": "demo-4",
+      "target": "demo-2"
+    },
+    {
+      "step": 9,
+      "action": "nightAction",
+      "actor": "demo-5",
+      "target": "demo-4"
+    },
+    {
+      "step": 10,
+      "action": "nightAction",
+      "actor": "demo-6",
+      "target": "demo-5"
+    },
+    {
+      "step": 11,
+      "action": "resolveNight"
+    },
+    {
+      "step": 12,
+      "action": "revealNight"
+    },
+    {
+      "step": 13,
+      "action": "ghostEnter",
+      "actor": "demo-6"
+    },
+    {
+      "step": 14,
+      "action": "ghostBingoPrepare",
+      "actor": "demo-6",
+      "conditionLabels": "data.ghostBingoConditionLabels",
+      "center": "FREE"
+    },
+    {
+      "step": 15,
+      "action": "ghostChat",
+      "actor": "demo-6",
+      "message": "빙고를 시작해요!"
+    },
+    {
+      "step": 16,
+      "action": "startDiscussion"
+    },
+    {
+      "step": 17,
+      "action": "startVote"
+    },
+    {
+      "step": 18,
+      "action": "vote",
+      "actor": "demo-1",
+      "target": "demo-2"
+    },
+    {
+      "step": 19,
+      "action": "vote",
+      "actor": "demo-2",
+      "target": "demo-1"
+    },
+    {
+      "step": 20,
+      "action": "vote",
+      "actor": "demo-3",
+      "target": "demo-1"
+    },
+    {
+      "step": 21,
+      "action": "vote",
+      "actor": "demo-4",
+      "target": "demo-1"
+    },
+    {
+      "step": 22,
+      "action": "vote",
+      "actor": "demo-5",
+      "target": "demo-1"
+    },
+    {
+      "step": 23,
+      "action": "resolveVote"
+    },
+    {
+      "step": 24,
+      "action": "revealRole"
+    },
+    {
+      "step": 25,
+      "action": "evaluateWinner"
+    }
+  ],
+  "assertions": [
+    "역할과 밤 행동의 비밀",
+    "사망자는 투표 불가",
+    "유령 빙고 조건 및 채팅 권한",
+    "승리 조건으로만 종료"
+  ],
+  "adapterNotes": "Semantic actions only; map to current tested game engine. Never write fixture directly to Firebase. Keep privateFixtureData only in isolated simulation; construct role-specific projections. Generate missing boards/decks deterministically from provided concepts/images for other demo participants; do not fake completion. Check image asset paths and actual rule constraints."
+}

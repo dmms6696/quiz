@@ -1,0 +1,45 @@
+<!doctype html>
+<html lang="ko" data-wallpaper="library">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="playground-build" content="1.0.0-rc.1-static" />
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline'; connect-src 'self'; img-src 'self' data: blob:; style-src 'self' 'unsafe-inline'; frame-src 'none'; object-src 'none'; form-action 'none'; base-uri 'none'" />
+    <title>교사용 체험 | 동명중학교 PLAYGROUND</title>
+    <link rel="stylesheet" href="./style.css?v=20261125" />
+    <link rel="stylesheet" href="./playground.css?v=avatars2" />
+    <link rel="stylesheet" href="./arcade.css?v=arcade1" />
+    <link rel="stylesheet" href="./studio.css?v=studio2" />
+    <link rel="stylesheet" href="./experience.css?v=experience5" />
+    <link rel="stylesheet" href="./stage.css?v=experience5" />
+    <link rel="stylesheet" href="./polish.css?v=experience5" />
+    <link rel="stylesheet" href="./ux.css?v=classroom1" />
+    <link rel="stylesheet" href="./release.css?v=1.0.0-rc.1-static" />
+    <script type="importmap">
+      {"imports":{
+        "https://www.gstatic.com/firebasejs/12.15.0/firebase-app.js":"./demo/runtime.mjs",
+        "https://www.gstatic.com/firebasejs/12.15.0/firebase-database.js":"./demo/runtime.mjs",
+        "https://www.gstatic.com/firebasejs/12.15.0/firebase-auth.js":"./demo/runtime.mjs"
+      }}
+    </script>
+  </head>
+  <body data-demo="true">
+    <header class="release-demo-bar">
+      <div><strong>교사용 체험</strong><span>가상 학생 · 수업 기록 없음</span></div>
+      <label>게임<select id="demoMode"></select></label>
+      <label>화면<select id="demoRole"><option value="teacher">교사</option><option value="student">학생</option><option value="display">교실 화면</option></select></label>
+      <label id="demoActorField" hidden>가상 학생<select id="demoActor"></select></label>
+      <button class="btn ghost" id="demoRestart" type="button">체험 초기화</button>
+      <a class="btn ghost" href="./index.html">체험 종료</a>
+    </header>
+    <header id="studentProfile" class="student-profile" hidden></header>
+    <div id="classroomSound" class="classroom-sound" hidden></div>
+    <p id="demoStatus" class="release-demo-status" role="status">체험을 불러오는 중입니다.</p>
+    <main id="app" class="app-shell"></main>
+    <dialog id="avatarPicker" class="avatar-picker" aria-labelledby="avatarPickerTitle"></dialog>
+    <dialog id="uxHostDialog" class="ux-host-dialog" aria-labelledby="uxHostDialogTitle"></dialog>
+    <div id="toast" class="toast" role="status" aria-live="polite"></div>
+    <script defer src="./release.js?v=1.0.0-rc.1-static"></script>
+    <script type="module" src="./demo/entry.mjs?v=1.0.0-rc.1-static"></script>
+  </body>
+</html>
